@@ -503,12 +503,23 @@ async function post(url, body) {
   return data;
 }
 
+function bar(label, spent, cap) {
+  const ratio = Math.min(1, spent / cap);
+  const near = ratio >= 0.8;
+  return `${label} ${spent.toFixed(1)} 円 / 上限 ${cap.toFixed(0)} 円`
+    + `<span class="track"><span class="fill" style="width:${(ratio * 100).toFixed(1)}%`
+    + `${near ? ";background:var(--critical)" : ""}"></span></span>`;
+}
+
 function meter(d) {
   if (d.spent_yen == null) return;
-  const ratio = Math.min(1, d.spent_yen / d.cap_yen);
-  $("meter").innerHTML =
-    `本日の利用額（概算） ${d.spent_yen.toFixed(1)} 円 / 上限 ${d.cap_yen.toFixed(0)} 円`
-    + `<span class="track"><span class="fill" style="width:${(ratio * 100).toFixed(1)}%"></span></span>`;
+  let html = bar("本日", d.spent_yen, d.cap_yen);
+  // 課題期間の通算。日次上限は毎日戻るが、最終的に止まるのはこちら。
+  if (d.period_cap_yen != null) {
+    html += `<span style="display:block;margin-top:.35rem">`
+          + bar("課題期間の通算", d.period_yen, d.period_cap_yen) + `</span>`;
+  }
+  $("meter").innerHTML = html;
 }
 
 function fileChip(file) {

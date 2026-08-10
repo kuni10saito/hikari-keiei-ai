@@ -44,6 +44,15 @@ def init() -> None:
             """
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (student_id, day)")
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS history (
+                student_id TEXT PRIMARY KEY,
+                updated_at TEXT NOT NULL,
+                payload    TEXT NOT NULL
+            )
+            """
+        )
 
 
 def today() -> str:
@@ -94,6 +103,53 @@ def spent_today_total_usd() -> float:
             "SELECT COALESCE(SUM(usd), 0) AS s FROM usage WHERE day = ?", (today(),)
         ).fetchone()
     return float(row["s"])
+
+
+def spent_period_usd(student_id: str) -> float:
+    """課題期間の通算（このDBが作られてから全部）。"""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COALESCE(SUM(usd), 0) AS s FROM usage WHERE student_id = ?",
+            (student_id,),
+        ).fetchone()
+    return float(row["s"])
+
+
+def spent_period_total_usd() -> float:
+    """全学生の通算。日次上限が毎日リセットされても、ここで最終的に止まる。"""
+    with _conn() as c:
+        row = c.execute("SELECT COALESCE(SUM(usd), 0) AS s FROM usage").fetchone()
+    return float(row["s"])
+
+
+# --------------------------------------------------------------------------
+# 会話履歴の永続化
+#
+# 課題として数日〜数週間使われるため、プロセス内メモリだけだと
+# 再デプロイや再起動で学生の作業が消える。永続ディスク上のDBに退避する。
+# --------------------------------------------------------------------------
+
+def save_history(student_id: str, payload: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO history (student_id, updated_at, payload) VALUES (?,?,?)"
+            " ON CONFLICT(student_id) DO UPDATE SET updated_at=excluded.updated_at,"
+            " payload=excluded.payload",
+            (student_id, datetime.datetime.now().isoformat(timespec="seconds"), payload),
+        )
+
+
+def load_history(student_id: str) -> str | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT payload FROM history WHERE student_id = ?", (student_id,)
+        ).fetchone()
+    return row["payload"] if row else None
+
+
+def clear_history(student_id: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM history WHERE student_id = ?", (student_id,))
 
 
 def summary() -> list[dict]:

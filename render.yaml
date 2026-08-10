@@ -32,18 +32,26 @@ services:
       - key: DATA_DIR
         value: /var/data
 
-      # --- 秘密情報：ダッシュボードで入力する（リポジトリには保存されない）---
+      # --- 秘密情報・個人情報：ダッシュボードで入力する ---
+      # （リポジトリには保存されない。ROSTER は学籍番号なのでここに書かない）
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: CLASS_PASSWORD
         sync: false
       - key: ADMIN_KEY
         sync: false
+      - key: ROSTER
+        sync: false
 
-      # --- 調整可能な設定 ---
+      # --- 利用上限（受講者2名想定）---
+      # 日次は毎日リセットされるので、最終的な歯止めは通算の方。
       - key: DAILY_YEN_CAP
-        value: "500"
+        value: "300"
       - key: DAILY_TOTAL_YEN_CAP
-        value: "8000"
+        value: "800"
+      - key: PERIOD_YEN_CAP
+        value: "1000"
+      - key: PERIOD_TOTAL_YEN_CAP
+        value: "2500"
       - key: USD_JPY
         value: "155"

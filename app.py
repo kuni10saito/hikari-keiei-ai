@@ -58,8 +58,14 @@ SKILL_IDS = ["xlsx", "docx", "pptx", "pdf"]
 BETAS = ["code-execution-2025-08-25", "skills-2025-10-02", "files-api-2025-04-14"]
 
 CLASS_PASSWORD = os.environ.get("CLASS_PASSWORD", "hikari")
-DAILY_YEN_CAP = float(os.environ.get("DAILY_YEN_CAP", "500"))        # 学生1人あたり
-DAILY_TOTAL_YEN_CAP = float(os.environ.get("DAILY_TOTAL_YEN_CAP", "8000"))  # 全体
+
+# 利用上限は日次と通算の二段。日次だけだと課題期間の日数ぶん上限が
+# リセットされ、通算では歯止めにならない。最終的に止めるのは通算の方。
+DAILY_YEN_CAP = float(os.environ.get("DAILY_YEN_CAP", "300"))               # 1人/日
+DAILY_TOTAL_YEN_CAP = float(os.environ.get("DAILY_TOTAL_YEN_CAP", "800"))   # 全体/日
+PERIOD_YEN_CAP = float(os.environ.get("PERIOD_YEN_CAP", "1000"))            # 1人/通算
+PERIOD_TOTAL_YEN_CAP = float(os.environ.get("PERIOD_TOTAL_YEN_CAP", "2500"))# 全体/通算
+
 USD_JPY = float(os.environ.get("USD_JPY", "155"))
 MAX_CARRY_FILES = 3          # 直前ターンの成果物を何件まで次のターンに持ち越すか
 MAX_RESUME = 5               # pause_turn の再開上限
@@ -156,7 +162,9 @@ def _banner() -> None:
         f"（{len(_CLASS_PASSWORD_NORM)}文字）",
         f"  モデル      : {MODEL}"
         f"（入力 ${_prices()[0] * 1_000_000:.2f} / 出力 ${_prices()[1] * 1_000_000:.2f} per 1M）",
-        f"  1日上限     : {DAILY_YEN_CAP:.0f} 円/人 ／ クラス全体 {DAILY_TOTAL_YEN_CAP:.0f} 円",
+        f"  日次上限    : {DAILY_YEN_CAP:.0f} 円/人 ／ 全体 {DAILY_TOTAL_YEN_CAP:.0f} 円",
+        f"  通算上限    : {PERIOD_YEN_CAP:.0f} 円/人 ／ 全体 {PERIOD_TOTAL_YEN_CAP:.0f} 円"
+        f"（現在 {db.spent_period_total_usd() * USD_JPY:.1f} 円）",
         f"  ログイン防御: {LOGIN_MAX_FAILS}回失敗で{LOGIN_LOCK_SEC // 60}分ロック",
         f"  APIキー     : {'設定済み' if os.environ.get('ANTHROPIC_API_KEY') else '★未設定★'}",
         f"  データ保存先: {DATA_DIR}"
@@ -182,6 +190,83 @@ def _cost_usd(*, input_tokens: int, output_tokens: int,
         + cache_read * price_in * 0.10
         + output_tokens * price_out
     )
+
+
+def _usage_payload(student_id: str) -> dict[str, Any]:
+    """画面に返す利用状況。日次と通算の両方を出す。"""
+    return {
+        "student_id": student_id,
+        "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
+        "cap_yen": DAILY_YEN_CAP,
+        "period_yen": db.spent_period_usd(student_id) * USD_JPY,
+        "period_cap_yen": PERIOD_YEN_CAP,
+    }
+
+
+def _check_caps(student_id: str) -> None:
+    """4つの上限を順に確認する。通算の方が最終的な歯止め。"""
+    checks = (
+        (db.spent_today_usd(student_id) * USD_JPY, DAILY_YEN_CAP,
+         "本日のあなたの利用上限（{cap:.0f}円）に達しました。明日また使ってください。"),
+        (db.spent_today_total_usd() * USD_JPY, DAILY_TOTAL_YEN_CAP,
+         "本日のクラス全体の上限（{cap:.0f}円）に達しました。明日また使ってください。"),
+        (db.spent_period_usd(student_id) * USD_JPY, PERIOD_YEN_CAP,
+         "課題期間を通じたあなたの利用上限（{cap:.0f}円）に達しました。教員に連絡してください。"),
+        (db.spent_period_total_usd() * USD_JPY, PERIOD_TOTAL_YEN_CAP,
+         "課題期間を通じたクラス全体の上限（{cap:.0f}円）に達しました。教員に連絡してください。"),
+    )
+    for spent, cap, message in checks:
+        if spent >= cap:
+            raise HTTPException(status_code=429, detail=message.format(cap=cap))
+
+
+# --------------------------------------------------------------------------
+# 会話履歴の永続化
+# --------------------------------------------------------------------------
+
+def _jsonable(messages: list[Any]) -> str:
+    """SDK の応答ブロック（Pydantic）を含む messages を JSON 文字列にする。"""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            out.append({"role": m["role"], "content": content})
+            continue
+        blocks: list[Any] = []
+        for b in content:
+            if isinstance(b, dict):
+                blocks.append(b)
+            elif hasattr(b, "model_dump"):
+                blocks.append(b.model_dump(mode="json", exclude_none=True))
+            else:
+                blocks.append(b)
+        out.append({"role": m["role"], "content": blocks})
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _persist_history(student_id: str) -> None:
+    try:
+        db.save_history(student_id, _jsonable(HISTORY.get(student_id, [])))
+    except Exception as exc:  # 保存に失敗しても会話自体は続行させる
+        print(f"[WARN] 履歴の保存に失敗 ({student_id}): {exc}", flush=True)
+
+
+def _restore_history(student_id: str) -> list[Any]:
+    """ディスクから履歴を復元する。壊れていれば黙って捨てて新規開始。"""
+    if student_id in HISTORY:
+        return HISTORY[student_id]
+    messages: list[Any] = []
+    try:
+        payload = db.load_history(student_id)
+        if payload:
+            loaded = json.loads(payload)
+            if isinstance(loaded, list):
+                messages = loaded
+    except Exception as exc:
+        print(f"[WARN] 履歴の復元に失敗 ({student_id})、新規開始します: {exc}", flush=True)
+        db.clear_history(student_id)
+    HISTORY[student_id] = messages
+    return messages
 
 
 def _safe_name(filename: str) -> str | None:
@@ -338,14 +423,13 @@ def login(request: Request, response: Response, body: dict = Body(...)):
     LOGIN_FAILS.pop(ip, None)
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = student_id
-    HISTORY.setdefault(student_id, [])
+    _restore_history(student_id)   # 前回の続きから再開できるようにする
     response.set_cookie(
         "session", token, httponly=True, samesite="lax",
         secure=_is_https(request),   # HTTPS 経由なら平文接続に載せない
         max_age=60 * 60 * 8,
     )
-    return {"student_id": student_id, "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
-            "cap_yen": DAILY_YEN_CAP}
+    return _usage_payload(student_id)
 
 
 @app.post("/api/logout")
@@ -361,6 +445,7 @@ def reset(session: str | None = Cookie(default=None)):
     student_id = _require_student(session)
     HISTORY[student_id] = []
     CARRY[student_id] = []
+    db.clear_history(student_id)
     return {"ok": True}
 
 
@@ -371,23 +456,9 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     if not text:
         raise HTTPException(status_code=400, detail="メッセージが空です")
 
-    spent_yen = db.spent_today_usd(student_id) * USD_JPY
-    if spent_yen >= DAILY_YEN_CAP:
-        raise HTTPException(
-            status_code=429,
-            detail=f"本日の利用上限（{DAILY_YEN_CAP:.0f}円）に達しました。明日また使ってください。",
-        )
+    _check_caps(student_id)
 
-    # サーキットブレーカー。想定外の使われ方をしたときに請求が青天井にならないよう、
-    # クラス全体の合計にも上限を置く。
-    total_yen = db.spent_today_total_usd() * USD_JPY
-    if total_yen >= DAILY_TOTAL_YEN_CAP:
-        raise HTTPException(
-            status_code=429,
-            detail=f"クラス全体の本日の上限（{DAILY_TOTAL_YEN_CAP:.0f}円）に達しました。教員に連絡してください。",
-        )
-
-    messages = HISTORY.setdefault(student_id, [])
+    messages = _restore_history(student_id)
 
     # 直前に作った成果物をコンテナに持ち込む。これがないと
     # 「さっきの Excel にグラフを足して」が通らない（コンテナは毎回新規のため）。
@@ -398,6 +469,20 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
 
     try:
         response, totals = _run_turn(messages)
+    except anthropic.BadRequestError as exc:
+        # ディスクから復元した履歴が API に受け付けられないケース。
+        # 学生を詰まらせないよう、履歴を捨てて今回の発言だけで一度やり直す。
+        print(f"[WARN] 復元履歴が拒否されたため会話をリセット ({student_id}): {exc}", flush=True)
+        db.clear_history(student_id)
+        CARRY[student_id] = []
+        messages = HISTORY[student_id] = [{"role": "user", "content": [{"type": "text", "text": text}]}]
+        try:
+            response, totals = _run_turn(messages)
+        except anthropic.APIStatusError as exc2:
+            HISTORY[student_id] = []
+            raise HTTPException(
+                status_code=502, detail=f"Claude API エラー: {exc2.message}"
+            ) from exc2
     except anthropic.APIStatusError as exc:
         messages.pop()  # 失敗したターンは履歴から戻す
         raise HTTPException(status_code=502, detail=f"Claude API エラー: {exc.message}") from exc
@@ -441,11 +526,16 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     if response.stop_reason == "max_tokens":
         reply += "\n\n（出力が上限に達しました。「続き」と入力すると再開します）"
 
+    # ターンが成功したここで初めて永続化する。失敗したターンは残さない。
+    _persist_history(student_id)
+
     return {
         "reply": reply or "（テキスト応答なし）",
         "files": [{"name": f["name"], "url": f"/api/files/{f['name']}"} for f in files],
         "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
         "cap_yen": DAILY_YEN_CAP,
+        "period_yen": db.spent_period_usd(student_id) * USD_JPY,
+        "period_cap_yen": PERIOD_YEN_CAP,
     }
 
 
@@ -473,12 +563,7 @@ def company(session: str | None = Cookie(default=None)):
 
 @app.get("/api/usage")
 def usage(session: str | None = Cookie(default=None)):
-    student_id = _require_student(session)
-    return {
-        "student_id": student_id,
-        "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
-        "cap_yen": DAILY_YEN_CAP,
-    }
+    return _usage_payload(_require_student(session))
 
 
 @app.get("/api/admin/usage")
