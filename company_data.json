@@ -1,0 +1,36 @@
+{
+  "_comment": "ダッシュボード表示用の数値。company.md の【演習用・想定】セクションと一致させること。単位は千円。",
+  "company": {
+    "name": "株式会社ヒカリ",
+    "founded": "1982年（前身は1975年 有限会社光パン粉）",
+    "business": "業務用食品卸売業／お惣菜・業務用食品の製造販売",
+    "area": "愛知・岐阜・三重・静岡（西部）",
+    "group": "三給株式会社 → 株式会社トーカン グループ",
+    "site": "https://hikari-kk.com/"
+  },
+  "disclaimer": "財務数値は演習用の想定値です。株式会社ヒカリの実際の財務内容ではありません。",
+  "periods": ["第41期", "第42期", "第43期"],
+  "pl": {
+    "sales":            [6420000, 6285000, 6138000],
+    "gross_profit":     [1187700, 1125300, 1066000],
+    "operating_profit": [106700, 62500, 17500],
+    "net_income":       [66400, 34900, 2100]
+  },
+  "bs": {
+    "total_assets": 2495000,
+    "net_assets": 1035000,
+    "receivables": 861000,
+    "inventory": 428000,
+    "interest_bearing_debt": 710000
+  },
+  "cf": {
+    "operating": 58400,
+    "investing": -92000,
+    "financing": 21000
+  },
+  "segments": [
+    { "name": "卸売（他社商品）",   "short": "卸売",     "sales": 4542000, "gross_profit": 521205 },
+    { "name": "PB・自社製造品",     "short": "PB",       "sales": 1289000, "gross_profit": 418925 },
+    { "name": "販促・企画サービス", "short": "販促",     "sales":  307000, "gross_profit": 125870 }
+  ]
+}

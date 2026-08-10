@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>株式会社ヒカリ 経営演習AI</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:      #f9f9f7;
+    --card:      #ffffff;
+    --line:      rgba(11,11,11,.10);
+    --ink:       #0b0b0b;
+    --ink-2:     #52514e;
+    --muted:     #898781;
+    --grid:      #e1e0d9;
+    --axis:      #c3c2b7;
+    --s1:        #2a78d6;
+    --s2:        #eb6834;
+    --s3:        #1baf7a;
+    --good:      #006300;
+    --critical:  #d03b3b;
+    --accent:    #2a78d6;
+    --accent-bg: #eef4fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;  --card: #201e1b;  --line: rgba(255,255,255,.10);
+      --ink: #ffffff;   --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a;  --axis: #383835;
+      --s1: #3987e5;    --s2: #d95926;    --s3: #199e70;
+      --good: #0ca30c;  --critical: #d03b3b;
+      --accent: #3987e5; --accent-bg: #1a2536;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;  --card: #201e1b;  --line: rgba(255,255,255,.10);
+    --ink: #ffffff;   --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a;  --axis: #383835;
+    --s1: #3987e5;    --s2: #d95926;    --s3: #199e70;
+    --good: #0ca30c;  --critical: #d03b3b;
+    --accent: #3987e5; --accent-bg: #1a2536;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink); line-height: 1.7;
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN",
+                 "Yu Gothic", Meiryo, sans-serif;
+  }
+
+  header {
+    border-bottom: 1px solid var(--line); padding: .6rem 1rem; background: var(--card);
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 20;
+  }
+  header h1 { font-size: .95rem; margin: 0; font-weight: 600; }
+  header .who { color: var(--muted); font-size: .82rem; margin-left: auto; }
+
+  button {
+    font: inherit; font-size: .85rem; border: 1px solid var(--line); background: var(--card);
+    color: var(--ink); border-radius: 6px; padding: .3rem .7rem; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ---------- ログイン ---------- */
+  #login { max-width: 380px; margin: 4rem auto; padding: 0 1rem; }
+  #login label { display: block; margin: .9rem 0 .3rem; font-size: .82rem; color: var(--ink-2); }
+  #login input {
+    font: inherit; width: 100%; padding: .5rem .6rem; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+
+  /* ---------- レイアウト ---------- */
+  .layout {
+    display: grid; grid-template-columns: minmax(330px, 400px) minmax(0, 1fr);
+    gap: 1rem; padding: 1rem; align-items: start; max-width: 1500px; margin: 0 auto;
+  }
+  @media (max-width: 940px) { .layout { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: .9rem 1rem; margin-bottom: .8rem;
+  }
+  .card h2 {
+    font-size: .78rem; font-weight: 600; color: var(--ink-2);
+    margin: 0 0 .7rem; letter-spacing: .02em;
+  }
+  .card h2 .sub { font-weight: 400; color: var(--muted); }
+
+  .note { font-size: .74rem; color: var(--muted); margin: .5rem 0 0; }
+
+  /* ---------- ヒーロー & KPI ---------- */
+  .hero-label { font-size: .78rem; color: var(--ink-2); margin: 0; }
+  .hero-value { font-size: 3rem; font-weight: 600; line-height: 1.1; margin: .1rem 0 .2rem; }
+  .hero-delta { font-size: .82rem; color: var(--ink-2); }
+  .hero-delta .dir { font-weight: 600; }
+  .dir.down { color: var(--critical); }
+  .dir.up   { color: var(--good); }
+
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .kpi { border: 1px solid var(--line); border-radius: 8px; padding: .5rem .6rem; }
+  .kpi .k { font-size: .72rem; color: var(--muted); }
+  .kpi .v { font-size: 1.15rem; font-weight: 600; }
+  .kpi .u { font-size: .72rem; color: var(--muted); font-weight: 400; margin-left: .15rem; }
+
+  /* ---------- チャート ---------- */
+  .multiples { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; }
+  .mult-title { font-size: .74rem; color: var(--ink-2); margin: 0 0 .2rem; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .tick { font-size: 9.5px; fill: var(--muted); }
+  .vlab { font-size: 10px; fill: var(--ink-2); }
+  .vlab.strong { font-weight: 600; fill: var(--ink); }
+  .catlab { font-size: 10.5px; fill: var(--ink-2); }
+  .inlab { font-size: 10px; font-weight: 600; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: .1rem .9rem; margin-top: .5rem; }
+  .legend span { font-size: .74rem; color: var(--ink-2); display: inline-flex; align-items: center; gap: .3rem; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+  table.tv { width: 100%; border-collapse: collapse; font-size: .76rem; margin-top: .6rem; }
+  table.tv th, table.tv td { padding: .25rem .4rem; border-bottom: 1px solid var(--line); text-align: right; }
+  table.tv th:first-child, table.tv td:first-child { text-align: left; }
+  table.tv th { color: var(--muted); font-weight: 500; }
+  table.tv td { font-variant-numeric: tabular-nums; }
+
+  #tip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: .3rem .55rem; font-size: .76rem; color: var(--ink);
+    box-shadow: 0 4px 14px rgba(0,0,0,.14); z-index: 50; white-space: nowrap;
+  }
+
+  /* ---------- チャット ---------- */
+  /* 左のダッシュボードは縦に長いので、右カラムは画面に貼り付けて
+     入力欄が常に見える位置（下端）に来るようにする。 */
+  .chat {
+    display: flex; flex-direction: column;
+    position: sticky; top: calc(3.2rem + 1rem);
+    height: calc(100vh - 3.2rem - 2rem);
+  }
+  #log { flex: 1; overflow-y: auto; min-height: 0; padding-right: .2rem; }
+  @media (max-width: 940px) {
+    .chat { position: static; height: auto; }
+    #log { overflow: visible; }
+  }
+  .msg { margin: 0 0 1rem; }
+  .msg .role { font-size: .72rem; color: var(--muted); margin-bottom: .2rem; }
+  .msg .body {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: .65rem .85rem; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .msg.me .body { background: var(--accent-bg); border-color: transparent; }
+
+  .files { margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .files a {
+    font-size: .82rem; text-decoration: none; border: 1px solid var(--accent);
+    color: var(--accent); border-radius: 999px; padding: .18rem .7rem;
+  }
+  .files a:hover { background: var(--accent); color: #fff; }
+
+  form#ask { display: flex; gap: .5rem; margin-top: .8rem; }
+  form#ask textarea {
+    flex: 1; font: inherit; resize: vertical; min-height: 3.4rem;
+    padding: .55rem .7rem; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .meter { font-size: .76rem; color: var(--muted); margin: .5rem 0 0; }
+  .meter .track { display: block; height: 4px; border-radius: 2px; background: var(--grid); margin-top: .3rem; }
+  .meter .fill { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+  .err { color: var(--critical); font-size: .82rem; }
+  .hint { color: var(--muted); font-size: .8rem; }
+  .hint code { background: var(--page); padding: .1rem .35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>株式会社ヒカリ 経営演習AI</h1>
+  <span class="who" id="who"></span>
+  <button id="reset" hidden>会話をリセット</button>
+  <button id="logout" hidden>ログアウト</button>
+</header>
+
+<section id="login">
+  <p class="hint">学籍番号とクラスパスワードでログインしてください。</p>
+  <label for="sid">学籍番号</label>
+  <input id="sid" autocomplete="username" placeholder="例）29a0001">
+  <label for="pw">パスワード</label>
+  <input id="pw" type="password" autocomplete="current-password" placeholder="クラス共通パスワード">
+  <p><button class="primary" id="dologin" style="width:100%">ログイン</button></p>
+  <p class="err" id="loginerr"></p>
+</section>
+
+<div class="layout" id="app" hidden>
+
+  <!-- ============ 左：ダッシュボード ============ -->
+  <aside>
+    <div class="card" id="cocard"></div>
+
+    <div class="card">
+      <h2>収益性 <span class="sub">第43期</span></h2>
+      <p class="hero-label">営業利益率</p>
+      <p class="hero-value" id="heroVal">—</p>
+      <p class="hero-delta" id="heroDelta"></p>
+      <div class="kpis" id="kpis" style="margin-top:.8rem"></div>
+    </div>
+
+    <div class="card">
+      <h2>売上高と営業利益の推移 <span class="sub">単位：百万円</span></h2>
+      <div class="multiples">
+        <div><p class="mult-title">売上高</p><div id="cSales"></div></div>
+        <div><p class="mult-title">営業利益</p><div id="cProfit"></div></div>
+      </div>
+      <p class="note">売上は3期で4.4%減にとどまるが、営業利益は83.6%減。</p>
+    </div>
+
+    <div class="card">
+      <h2>セグメント別 売上総利益率 <span class="sub">第43期</span></h2>
+      <div id="cSegGm"></div>
+      <p class="note">左の括弧内は売上構成比。構成比が最も大きい卸売の利益率が最も低い。</p>
+    </div>
+
+    <div class="card">
+      <h2>売上構成比 <span class="sub">第43期</span></h2>
+      <div id="cSegMix"></div>
+      <div class="legend" id="mixLegend"></div>
+    </div>
+
+    <div class="card">
+      <h2>数値一覧</h2>
+      <button id="tvToggle">表を開く</button>
+      <div id="tv" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2>作成した成果物</h2>
+      <div class="files" id="fileList"><span class="hint">まだありません</span></div>
+    </div>
+  </aside>
+
+  <!-- ============ 右：チャット ============ -->
+  <section class="chat">
+    <div class="card">
+      <h2>経営企画担当AI</h2>
+      <p class="hint" style="margin:0">
+        分析の依頼や、Excel・スライド・レポートの作成を指示してください。<br>
+        例：<code>セグメント別の収益性をExcelにまとめて</code> ／
+        <code>損益分岐点売上高を計算して</code> ／
+        <code>役員会用に3枚のスライドを作って</code>
+      </p>
+    </div>
+
+    <div id="log"></div>
+
+    <form id="ask">
+      <textarea id="input" placeholder="依頼を入力（Ctrl+Enter で送信）"></textarea>
+      <button class="primary" id="send">送信</button>
+    </form>
+    <p class="meter" id="meter"></p>
+    <p class="err" id="err"></p>
+  </section>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+let busy = false, DATA = null;
+
+/* ---------------- 数値整形 ---------------- */
+const man = (thousandYen) => thousandYen / 1000;                 // 千円 → 百万円
+const fmtMan = (v) => Math.round(man(v)).toLocaleString("ja-JP");
+const pct = (n, d) => (d ? (n / d) * 100 : 0);
+const p1 = (v) => v.toFixed(1);
+const p2 = (v) => v.toFixed(2);
+
+/* ---------------- SVG ヘルパ ---------------- */
+function el(name, attrs, parent) {
+  const n = document.createElementNS(SVGNS, name);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.append(n);
+  return n;
+}
+function svgRoot(host, w, h) {
+  host.innerHTML = "";
+  const s = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img" });
+  host.append(s);
+  return s;
+}
+/** 上端だけ角丸（データ端）、下端は角ばったまま＝ベースライン */
+function colPath(x, yTop, w, yBase, r) {
+  r = Math.min(r, w / 2, Math.max(0, yBase - yTop));
+  return `M${x},${yBase} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} `
+       + `H${x + w - r} Q${x + w},${yTop} ${x + w},${yTop + r} V${yBase} Z`;
+}
+/** 右端だけ角丸（データ端） */
+function barPathR(x, y, w, h, r) {
+  r = Math.min(r, w, h / 2);
+  return `M${x},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} `
+       + `V${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} H${x} Z`;
+}
+/** 左端だけ角丸 */
+function barPathL(x, y, w, h, r) {
+  r = Math.min(r, w, h / 2);
+  return `M${x + r},${y} H${x + w} V${y + h} H${x + r} `
+       + `Q${x},${y + h} ${x},${y + h - r} V${y + r} Q${x},${y} ${x + r},${y} Z`;
+}
+
+/* ---------------- ツールチップ ---------------- */
+function tipify(node, text) {
+  node.style.cursor = "default";
+  node.addEventListener("pointerenter", () => {
+    $("tip").textContent = text;
+    $("tip").style.opacity = "1";
+  });
+  node.addEventListener("pointermove", (e) => {
+    $("tip").style.left = (e.clientX + 12) + "px";
+    $("tip").style.top = (e.clientY - 30) + "px";
+  });
+  node.addEventListener("pointerleave", () => { $("tip").style.opacity = "0"; });
+}
+
+/* ---------------- 縦棒（小倍数） ---------------- */
+function columnChart(host, labels, values, unitLabel) {
+  const W = 190, H = 120, padT = 18, padB = 20;
+  const s = svgRoot(host, W, H);
+  const base = H - padB;
+  const max = Math.max(...values) * 1.18 || 1;
+  const band = W / values.length;
+  const bw = Math.min(24, band * 0.5);
+
+  el("line", { x1: 0, y1: base, x2: W, y2: base, stroke: "var(--axis)", "stroke-width": 1 }, s);
+
+  values.forEach((v, i) => {
+    const x = i * band + (band - bw) / 2;
+    const y = padT + (1 - v / max) * (base - padT);
+    const p = el("path", { d: colPath(x, y, bw, base, 4), fill: "var(--s1)" }, s);
+    tipify(p, `${labels[i]}　${fmtMan(v)} ${unitLabel}`);
+
+    const t = el("text", {
+      x: x + bw / 2, y: y - 5, "text-anchor": "middle",
+      class: "vlab" + (i === values.length - 1 ? " strong" : ""),
+    }, s);
+    t.textContent = fmtMan(v);
+
+    const c = el("text", { x: x + bw / 2, y: base + 13, "text-anchor": "middle", class: "tick" }, s);
+    c.textContent = labels[i].replace("第", "").replace("期", "");
+  });
+}
+
+/* ---------------- 横棒（単一系列） ---------------- */
+function hBarChart(host, rows) {           // rows: [{label, value, tip}]
+  const W = 340, rowH = 34, padL = 128, padR = 42;
+  const H = rows.length * rowH + 6;
+  const s = svgRoot(host, W, H);
+  const max = Math.max(...rows.map((r) => r.value)) * 1.1 || 1;
+  const plot = W - padL - padR;
+  const bh = 16;
+
+  el("line", { x1: padL, y1: 2, x2: padL, y2: H - 4, stroke: "var(--axis)", "stroke-width": 1 }, s);
+
+  rows.forEach((r, i) => {
+    const y = i * rowH + (rowH - bh) / 2;
+    const w = Math.max(2, (r.value / max) * plot);
+
+    const lab = el("text", { x: padL - 8, y: y + bh - 3, "text-anchor": "end", class: "catlab" }, s);
+    lab.textContent = r.label;
+
+    const p = el("path", { d: barPathR(padL, y, w, bh, 4), fill: "var(--s1)" }, s);
+    tipify(p, r.tip);
+
+    const v = el("text", { x: padL + w + 6, y: y + bh - 3, class: "vlab strong" }, s);
+    v.textContent = p1(r.value) + "%";
+  });
+}
+
+/* ---------------- 積み上げ横棒（部分-全体） ---------------- */
+function stackedBar(host, parts) {         // parts: [{label, value, color}]
+  const W = 340, H = 34, bh = 22, GAP = 2, r = 4;
+  const s = svgRoot(host, W, H);
+  const total = parts.reduce((a, b) => a + b.value, 0);
+  const usable = W - GAP * (parts.length - 1);
+  let x = 0;
+
+  parts.forEach((part, i) => {
+    const w = (part.value / total) * usable;
+    const first = i === 0, last = i === parts.length - 1;
+    const d = first ? barPathL(x, 4, w, bh, r)
+            : last ? barPathR(x, 4, w, bh, r)
+            : `M${x},4 h${w} v${bh} h${-w} Z`;
+    const p = el("path", { d, fill: part.color }, s);
+    tipify(p, `${part.label}　${p1(pct(part.value, total))}%（${fmtMan(part.value)} 百万円）`);
+
+    // ラベルは収まるときだけ内側に置く（はみ出し・切り詰めはしない）
+    const share = p1(pct(part.value, total)) + "%";
+    if (w > 46) {
+      const t = el("text", {
+        x: x + w / 2, y: 19, "text-anchor": "middle", class: "inlab", fill: "#ffffff",
+      }, s);
+      t.textContent = share;
+    }
+    x += w + GAP;
+  });
+}
+
+/* ---------------- ダッシュボード描画 ---------------- */
+function renderDashboard(d) {
+  DATA = d;
+  const P = d.pl, n = P.sales.length - 1;
+  const sales = P.sales[n], gp = P.gross_profit[n], op = P.operating_profit[n];
+  const opm = pct(op, sales), opmPrev = pct(P.operating_profit[n - 1], P.sales[n - 1]);
+
+  // 会社カード
+  $("cocard").innerHTML = `
+    <h2>${d.company.name}</h2>
+    <p style="margin:0;font-size:.82rem;color:var(--ink-2)">${d.company.business}</p>
+    <p style="margin:.4rem 0 0;font-size:.78rem;color:var(--muted)">
+      営業エリア：${d.company.area}<br>
+      設立：${d.company.founded}<br>
+      資本関係：${d.company.group}
+    </p>
+    <p class="note">⚠ ${d.disclaimer}</p>`;
+
+  // ヒーロー（このビューで1つだけ）
+  // 差は「表示している丸め済みの値」から計算する。生の値で引くと
+  // 0.29 − 0.99 が 0.71pt と出て、画面の数字を引き算した学生と食い違う。
+  const cur = Number(p2(opm)), prev = Number(p2(opmPrev));
+  const diff = cur - prev;
+  $("heroVal").textContent = p2(opm) + "%";
+  $("heroDelta").innerHTML =
+    `<span class="dir ${diff < 0 ? "down" : "up"}">${diff < 0 ? "▼" : "▲"} ${p2(Math.abs(diff))}pt</span>`
+    + ` 前期比（第42期 ${p2(opmPrev)}%）`;
+
+  // KPI
+  const eq = pct(d.bs.net_assets, d.bs.total_assets);
+  $("kpis").innerHTML = [
+    ["売上高", fmtMan(sales), "百万円"],
+    ["売上総利益率", p1(pct(gp, sales)), "%"],
+    ["自己資本比率", p1(eq), "%"],
+    ["営業CF", fmtMan(d.cf.operating), "百万円"],
+  ].map(([k, v, u]) =>
+    `<div class="kpi"><div class="k">${k}</div><div class="v">${v}<span class="u">${u}</span></div></div>`
+  ).join("");
+
+  // 推移（小倍数：2つの独立した軸。1枚に2軸は使わない）
+  columnChart($("cSales"), d.periods, P.sales, "百万円");
+  columnChart($("cProfit"), d.periods, P.operating_profit, "百万円");
+
+  // セグメント別 粗利率
+  const total = d.segments.reduce((a, s) => a + s.sales, 0);
+  hBarChart($("cSegGm"), d.segments.map((s) => ({
+    label: `${s.short}（${p1(pct(s.sales, total))}%）`,
+    value: pct(s.gross_profit, s.sales),
+    tip: `${s.name}　売上総利益率 ${p1(pct(s.gross_profit, s.sales))}%`
+       + `（売上総利益 ${fmtMan(s.gross_profit)} 百万円）`,
+  })));
+
+  // 構成比
+  const colors = ["var(--s1)", "var(--s2)", "var(--s3)"];
+  stackedBar($("cSegMix"), d.segments.map((s, i) => ({
+    label: s.name, value: s.sales, color: colors[i],
+  })));
+  $("mixLegend").innerHTML = d.segments.map((s, i) =>
+    `<span><i class="swatch" style="background:${colors[i]}"></i>${s.name}</span>`
+  ).join("");
+
+  // 表形式ビュー（色だけに依存させないための等価表現）
+  $("tv").innerHTML = `
+    <table class="tv">
+      <tr><th>損益（百万円）</th>${d.periods.map((p) => `<th>${p}</th>`).join("")}</tr>
+      ${[["売上高", P.sales], ["売上総利益", P.gross_profit],
+         ["営業利益", P.operating_profit], ["当期純利益", P.net_income]]
+        .map(([k, arr]) => `<tr><td>${k}</td>${arr.map((v) => `<td>${fmtMan(v)}</td>`).join("")}</tr>`).join("")}
+    </table>
+    <table class="tv">
+      <tr><th>セグメント（第43期）</th><th>売上高</th><th>構成比</th><th>粗利</th><th>粗利率</th></tr>
+      ${d.segments.map((s) => `<tr><td>${s.name}</td><td>${fmtMan(s.sales)}</td>`
+        + `<td>${p1(pct(s.sales, total))}%</td><td>${fmtMan(s.gross_profit)}</td>`
+        + `<td>${p1(pct(s.gross_profit, s.sales))}%</td></tr>`).join("")}
+    </table>`;
+}
+
+$("tvToggle").onclick = () => {
+  const open = $("tv").hidden;
+  $("tv").hidden = !open;
+  $("tvToggle").textContent = open ? "表を閉じる" : "表を開く";
+};
+
+/* ---------------- 通信 ---------------- */
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `エラー (${res.status})`);
+  return data;
+}
+
+function meter(d) {
+  if (d.spent_yen == null) return;
+  const ratio = Math.min(1, d.spent_yen / d.cap_yen);
+  $("meter").innerHTML =
+    `本日の利用額（概算） ${d.spent_yen.toFixed(1)} 円 / 上限 ${d.cap_yen.toFixed(0)} 円`
+    + `<span class="track"><span class="fill" style="width:${(ratio * 100).toFixed(1)}%"></span></span>`;
+}
+
+function fileChip(file) {
+  const a = document.createElement("a");
+  a.href = file.url; a.textContent = "⬇ " + file.name;
+  a.setAttribute("download", file.name);
+  return a;
+}
+
+function bubble(role, text) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg" + (role === "me" ? " me" : "");
+  const r = document.createElement("div");
+  r.className = "role";
+  r.textContent = role === "me" ? "あなた" : "経営企画担当AI";
+  const b = document.createElement("div");
+  b.className = "body"; b.textContent = text;
+  wrap.append(r, b);
+  $("log").append(wrap);
+  wrap.scrollIntoView({ behavior: "smooth", block: "end" });
+  return b;
+}
+
+async function enterApp(d) {
+  $("login").hidden = true;
+  $("app").hidden = false;
+  $("reset").hidden = false;
+  $("logout").hidden = false;
+  $("who").textContent = d.student_id;
+  meter(d);
+  try { renderDashboard(await (await fetch("/api/company")).json()); }
+  catch { /* ダッシュボードが出なくてもチャットは使える */ }
+  $("input").focus();
+}
+
+/* ---------------- ログイン ---------------- */
+$("dologin").onclick = async () => {
+  $("loginerr").textContent = "";
+  const sid = $("sid").value.trim(), pw = $("pw").value;
+  if (!sid) { $("loginerr").textContent = "学籍番号を入力してください"; $("sid").focus(); return; }
+  if (!pw)  { $("loginerr").textContent = "パスワードを入力してください"; $("pw").focus(); return; }
+  $("dologin").disabled = true;
+  try { await enterApp(await post("/api/login", { student_id: sid, password: pw })); }
+  catch (e) { $("loginerr").textContent = e.message; }
+  finally { $("dologin").disabled = false; }
+};
+$("sid").addEventListener("keydown", (e) => { if (e.key === "Enter") $("pw").focus(); });
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("dologin").click(); });
+addEventListener("DOMContentLoaded", () => $("sid").focus());
+
+$("logout").onclick = async () => { await post("/api/logout"); location.reload(); };
+$("reset").onclick = async () => {
+  if (!confirm("会話履歴を消します。作成済みファイルは残ります。よろしいですか？")) return;
+  await post("/api/reset");
+  $("log").innerHTML = "";
+};
+
+/* ---------------- チャット ---------------- */
+$("ask").onsubmit = async (e) => {
+  e.preventDefault();
+  if (busy) return;
+  const text = $("input").value.trim();
+  if (!text) return;
+
+  busy = true; $("send").disabled = true; $("err").textContent = "";
+  bubble("me", text);
+  $("input").value = "";
+  const pending = bubble("ai", "考えています…（Excel等の作成は1〜3分かかることがあります）");
+
+  try {
+    const d = await post("/api/chat", { message: text });
+    pending.textContent = d.reply;
+    if (d.files?.length) {
+      const box = document.createElement("div");
+      box.className = "files";
+      const list = $("fileList");
+      if (list.querySelector(".hint")) list.innerHTML = "";
+      for (const f of d.files) { box.append(fileChip(f)); list.append(fileChip(f)); }
+      pending.parentElement.append(box);
+    }
+    meter(d);
+  } catch (err) {
+    pending.textContent = "―";
+    $("err").textContent = err.message;
+  } finally {
+    busy = false; $("send").disabled = false; $("input").focus();
+  }
+};
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("ask").requestSubmit();
+});
+
+/* 既存セッションがあればそのまま入る */
+fetch("/api/usage").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) enterApp(d); });
+</script>
+</body>
+</html>

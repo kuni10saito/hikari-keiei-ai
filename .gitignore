@@ -1,0 +1,35 @@
+# --- 絶対にコミットしないもの ---
+.env
+*.env
+!.env.example
+secrets.*
+*.key
+*.pem
+
+# 使用量DB（利用上限の判定に使う。ローカルの実績を公開しない）
+usage.sqlite3
+usage.sqlite3-*
+
+# 学生の生成物（個人の成果物なので置かない）
+outputs/
+
+# cloudflared のログ
+*_out.log
+*_err.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# OS / エディタ
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# 受講者名簿（実名・学籍番号を含むためコミットしない）
+roster.txt

@@ -1,0 +1,49 @@
+# Render Blueprint
+# https://render.com/docs/blueprint-spec
+#
+# 使い方: Render のダッシュボードで New → Blueprint を選び、このリポジトリを指定する。
+# 秘密情報（sync: false のもの）は、その場でダッシュボードに入力を求められる。
+# リポジトリには絶対に書かないこと。
+
+services:
+  - type: web
+    name: hikari-keiei-ai
+    runtime: python
+    plan: starter          # 永続ディスクには有料プランが必要。free では動かない
+    region: singapore      # 日本から最も近いリージョン
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /
+
+    # 永続ディスク。usage.sqlite3（利用上限の判定）と outputs/（生成物）を置く。
+    # これが無いと再デプロイのたびに利用上限がリセットされ、課金の歯止めが外れる。
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+
+      # 書き込み先を永続ディスクへ向ける。app.py / db.py がこれを見る。
+      - key: DATA_DIR
+        value: /var/data
+
+      # --- 秘密情報：ダッシュボードで入力する（リポジトリには保存されない）---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLASS_PASSWORD
+        sync: false
+      - key: ADMIN_KEY
+        sync: false
+
+      # --- 調整可能な設定 ---
+      - key: DAILY_YEN_CAP
+        value: "500"
+      - key: DAILY_TOTAL_YEN_CAP
+        value: "8000"
+      - key: USD_JPY
+        value: "155"
