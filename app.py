@@ -55,7 +55,13 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 MODEL = "claude-sonnet-5"
 SKILL_IDS = ["xlsx", "docx", "pptx", "pdf"]
-BETAS = ["code-execution-2025-08-25", "skills-2025-10-02", "files-api-2025-04-14"]
+BETAS = [
+    "code-execution-2025-08-25",
+    "skills-2025-10-02",
+    "files-api-2025-04-14",
+    "context-management-2025-06-27",   # 古いツール結果を履歴から落とす
+    "task-budgets-2026-03-13",         # 1ターンの規模に上限を置く
+]
 
 CLASS_PASSWORD = os.environ.get("CLASS_PASSWORD", "hikari")
 
@@ -69,6 +75,22 @@ PERIOD_TOTAL_YEN_CAP = float(os.environ.get("PERIOD_TOTAL_YEN_CAP", "2500"))# �
 USD_JPY = float(os.environ.get("USD_JPY", "155"))
 MAX_CARRY_FILES = 3          # 直前ターンの成果物を何件まで次のターンに持ち越すか
 MAX_RESUME = 5               # pause_turn の再開上限
+
+# 思考の深さ。思考トークンも出力として課金されるため、費用に直結する。
+# 実測では1ターンの費用の56%が出力だった。Sonnet 5 の既定は high。
+# medium は Sonnet 4.6 の high 相当で、経営分析の演習には十分。
+# 成果物の質が落ちるようなら EFFORT=high に戻す。
+EFFORT = os.environ.get("EFFORT", "medium")
+
+# 1ターンでモデルが使える token 数の目安。モデルは残量を見ながらペース配分し、
+# 尽きる前に切り上げる（max_tokens と違い、モデル自身が認識する予算）。
+# 実測: 未設定だとスライド3枚の生成が cache_write 61万トークン・262円に達した。
+# 最小値は 20,000。
+TASK_BUDGET_TOKENS = int(os.environ.get("TASK_BUDGET_TOKENS", "50000"))
+
+# ターン開始前に必要な余力（円）。上限判定はターン開始前にしか行えないため、
+# 残額ぎりぎりで重い依頼を始めると大幅に超過する。あらかじめ余力を要求する。
+TURN_RESERVE_YEN = float(os.environ.get("TURN_RESERVE_YEN", "120"))
 
 # ログイン総当たり対策。インターネットに公開するとクラス共通パスワードが
 # 総当たりの標的になるため、IP単位で失敗回数を数えて締め出す。
@@ -160,11 +182,12 @@ def _banner() -> None:
         f"  名簿        : {len(ROSTER)}名 -> {sorted(ROSTER)}",
         f"  パスワード  : {'環境変数 CLASS_PASSWORD を使用' if from_env else '未設定のため既定値 hikari'}"
         f"（{len(_CLASS_PASSWORD_NORM)}文字）",
-        f"  モデル      : {MODEL}"
+        f"  モデル      : {MODEL} / effort={EFFORT} / task_budget={TASK_BUDGET_TOKENS:,}"
         f"（入力 ${_prices()[0] * 1_000_000:.2f} / 出力 ${_prices()[1] * 1_000_000:.2f} per 1M）",
         f"  日次上限    : {DAILY_YEN_CAP:.0f} 円/人 ／ 全体 {DAILY_TOTAL_YEN_CAP:.0f} 円",
         f"  通算上限    : {PERIOD_YEN_CAP:.0f} 円/人 ／ 全体 {PERIOD_TOTAL_YEN_CAP:.0f} 円"
         f"（現在 {db.spent_period_total_usd() * USD_JPY:.1f} 円）",
+        f"  必要余力    : 1依頼あたり {TURN_RESERVE_YEN:.0f} 円（残額がこれ未満なら開始しない）",
         f"  ログイン防御: {LOGIN_MAX_FAILS}回失敗で{LOGIN_LOCK_SEC // 60}分ロック",
         f"  APIキー     : {'設定済み' if os.environ.get('ANTHROPIC_API_KEY') else '★未設定★'}",
         f"  データ保存先: {DATA_DIR}"
@@ -204,25 +227,65 @@ def _usage_payload(student_id: str) -> dict[str, Any]:
 
 
 def _check_caps(student_id: str) -> None:
-    """4つの上限を順に確認する。通算の方が最終的な歯止め。"""
+    """上限を確認する。
+
+    上限判定はターン開始前にしか行えず、1ターンの途中では止められない。
+    そのため残額ぎりぎりで重い依頼（スライド生成など）を始めると大幅に超過する。
+    実測で1ターン262円かかったことがあるため、TURN_RESERVE_YEN の余力を要求する。
+    """
     checks = (
-        (db.spent_today_usd(student_id) * USD_JPY, DAILY_YEN_CAP,
-         "本日のあなたの利用上限（{cap:.0f}円）に達しました。明日また使ってください。"),
-        (db.spent_today_total_usd() * USD_JPY, DAILY_TOTAL_YEN_CAP,
-         "本日のクラス全体の上限（{cap:.0f}円）に達しました。明日また使ってください。"),
-        (db.spent_period_usd(student_id) * USD_JPY, PERIOD_YEN_CAP,
-         "課題期間を通じたあなたの利用上限（{cap:.0f}円）に達しました。教員に連絡してください。"),
-        (db.spent_period_total_usd() * USD_JPY, PERIOD_TOTAL_YEN_CAP,
-         "課題期間を通じたクラス全体の上限（{cap:.0f}円）に達しました。教員に連絡してください。"),
+        (db.spent_today_usd(student_id) * USD_JPY, DAILY_YEN_CAP, "本日のあなた"),
+        (db.spent_today_total_usd() * USD_JPY, DAILY_TOTAL_YEN_CAP, "本日のクラス全体"),
+        (db.spent_period_usd(student_id) * USD_JPY, PERIOD_YEN_CAP, "課題期間のあなた"),
+        (db.spent_period_total_usd() * USD_JPY, PERIOD_TOTAL_YEN_CAP, "課題期間のクラス全体"),
     )
-    for spent, cap, message in checks:
+    for spent, cap, label in checks:
         if spent >= cap:
-            raise HTTPException(status_code=429, detail=message.format(cap=cap))
+            raise HTTPException(
+                status_code=429,
+                detail=f"{label}の利用上限（{cap:.0f}円）に達しました。教員に連絡してください。",
+            )
+        if spent + TURN_RESERVE_YEN > cap:
+            raise HTTPException(
+                status_code=429,
+                detail=f"{label}の残額が {cap - spent:.0f} 円です。"
+                       f"重い依頼で超過する可能性があるため、ここで停止しました"
+                       f"（1回の依頼に {TURN_RESERVE_YEN:.0f} 円の余力が必要）。",
+            )
 
 
 # --------------------------------------------------------------------------
 # 会話履歴の永続化
 # --------------------------------------------------------------------------
+
+def _block_type(block: Any) -> str:
+    return block.get("type", "") if isinstance(block, dict) else getattr(block, "type", "")
+
+
+def _prune(messages: list[Any]) -> list[Any]:
+    """履歴からテキスト以外のブロックを落とす。
+
+    code execution の実行ログとスクリプトは1回のExcel/スライド生成で
+    数十万文字になり、それが以後のターンで毎回再送されて費用が跳ね上がる。
+    （実測: 1回のスライド生成で履歴が 59,439 → 536,373 文字、そのターンが262円）
+
+    context editing はサーバ側でモデルに見せる文脈を削るだけで、こちらが
+    送信する履歴は減らない。送信量そのものを抑えるにはここで落とす必要がある。
+
+    残すのはテキストのみ。会話の流れは保たれ、生成済みファイルは
+    CARRY の file_id で次ターンに引き継がれる。
+    """
+    pruned: list[Any] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            pruned.append({"role": m["role"], "content": content})
+            continue
+        blocks = [b for b in content if _block_type(b) == "text"]
+        if blocks:                      # 中身が全部ツールだった回は丸ごと落とす
+            pruned.append({"role": m["role"], "content": blocks})
+    return pruned
+
 
 def _jsonable(messages: list[Any]) -> str:
     """SDK の応答ブロック（Pydantic）を含む messages を JSON 文字列にする。"""
@@ -245,8 +308,15 @@ def _jsonable(messages: list[Any]) -> str:
 
 
 def _persist_history(student_id: str) -> None:
+    """ターン成功後に履歴を刈り込み、メモリとディスクの両方を更新する。
+
+    メモリ側も置き換えるのが要点。ここを保存用のコピーだけに留めると、
+    次のターンで送信されるのは肥大化したままの履歴になる。
+    """
     try:
-        db.save_history(student_id, _jsonable(HISTORY.get(student_id, [])))
+        pruned = _prune(HISTORY.get(student_id, []))
+        HISTORY[student_id] = pruned
+        db.save_history(student_id, _jsonable(pruned))
     except Exception as exc:  # 保存に失敗しても会話自体は続行させる
         print(f"[WARN] 履歴の保存に失敗 ({student_id}): {exc}", flush=True)
 
@@ -325,6 +395,10 @@ def _request_kwargs(messages: list[Any]) -> dict[str, Any]:
         model=MODEL,
         max_tokens=16000,
         betas=BETAS,
+        output_config={
+            "effort": EFFORT,
+            "task_budget": {"type": "tokens", "total": TASK_BUDGET_TOKENS},
+        },
         container={
             "skills": [
                 {"type": "anthropic", "skill_id": sid, "version": "latest"}
@@ -332,6 +406,13 @@ def _request_kwargs(messages: list[Any]) -> dict[str, Any]:
             ]
         },
         tools=[{"type": "code_execution_20260521", "name": "code_execution"}],
+        # Excel等を1回作るたびに、code execution の巨大な実行ログとスクリプトが
+        # 履歴に積まれ、以後のターンで毎回再送されて費用が雪だるま式に増える。
+        # 古いツール結果と入力を履歴から自動で落とす。
+        # （実測: 未対策だと会話が30万トークンに達し、短い一言に265円かかった）
+        context_management={
+            "edits": [{"type": "clear_tool_uses_20250919", "clear_tool_inputs": True}]
+        },
         # cache_control は system の最後のブロックに置く。tools + system がまとめて
         # キャッシュされ、全学生が同じ company.md を共有するので読出コストは約1/10。
         # ここに日時や学生名を差し込むとキャッシュが毎回無効化されるので絶対に入れない。
@@ -505,6 +586,13 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
         usd=usd,
         prompt=text,
     )
+
+    # 会話が膨らむと1ターンの費用が跳ね上がる。異常に気づけるようログに出す。
+    context_tokens = totals["input"] + totals["cache_write"] + totals["cache_read"]
+    if context_tokens > 200_000:
+        print(f"[WARN] {student_id} の会話が肥大化しています "
+              f"({context_tokens:,} トークン / このターン {usd * USD_JPY:.1f} 円)。"
+              f" 「会話をリセット」を促してください。", flush=True)
 
     # refusal は HTTP 200 で返る。content を読む前に必ず確認する。
     if response.stop_reason == "refusal":
