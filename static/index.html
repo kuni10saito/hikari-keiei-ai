@@ -251,7 +251,7 @@
         分析の依頼や、Excel・スライド・レポートの作成を指示してください。<br>
         例：<code>セグメント別の収益性をExcelにまとめて</code> ／
         <code>損益分岐点売上高を計算して</code> ／
-        <code>役員会用に3枚のスライドを作って</code>
+        <code>役員会用に3枚のスライドを作って</code>（スライドは1回のみ）
       </p>
     </div>
 
@@ -518,6 +518,13 @@ function meter(d) {
   if (d.period_cap_yen != null) {
     html += `<span style="display:block;margin-top:.35rem">`
           + bar("課題期間の通算", d.period_yen, d.period_cap_yen) + `</span>`;
+  }
+  // スライドは1回あたり約156円（Excelの約9倍）なので残回数を明示する
+  if (d.pptx_limit != null) {
+    const left = Math.max(0, d.pptx_limit - d.pptx_used);
+    html += `<span style="display:block;margin-top:.35rem">`
+          + `スライド作成 残り ${left} 回 / ${d.pptx_limit} 回`
+          + (left === 0 ? "（上限に達したため作成できません）" : "") + `</span>`;
   }
   $("meter").innerHTML = html;
 }

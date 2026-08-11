@@ -68,9 +68,14 @@ CLASS_PASSWORD = os.environ.get("CLASS_PASSWORD", "hikari")
 # 利用上限は日次と通算の二段。日次だけだと課題期間の日数ぶん上限が
 # リセットされ、通算では歯止めにならない。最終的に止めるのは通算の方。
 DAILY_YEN_CAP = float(os.environ.get("DAILY_YEN_CAP", "300"))               # 1人/日
-DAILY_TOTAL_YEN_CAP = float(os.environ.get("DAILY_TOTAL_YEN_CAP", "800"))   # 全体/日
-PERIOD_YEN_CAP = float(os.environ.get("PERIOD_YEN_CAP", "1000"))            # 1人/通算
-PERIOD_TOTAL_YEN_CAP = float(os.environ.get("PERIOD_TOTAL_YEN_CAP", "2500"))# 全体/通算
+DAILY_TOTAL_YEN_CAP = float(os.environ.get("DAILY_TOTAL_YEN_CAP", "600"))   # 全体/日
+PERIOD_YEN_CAP = float(os.environ.get("PERIOD_YEN_CAP", "500"))             # 1人/通算
+PERIOD_TOTAL_YEN_CAP = float(os.environ.get("PERIOD_TOTAL_YEN_CAP", "1200"))# 全体/通算
+
+# スライド(pptx)は1回あたり約156円で、Excel(18円)の約9倍。
+# 費用の9割は Anthropic 側サーバ内部の code execution ループによる
+# キャッシュ書込で、こちらからは制御できない。回数で制限する。
+PPTX_LIMIT = int(os.environ.get("PPTX_LIMIT", "1"))
 
 USD_JPY = float(os.environ.get("USD_JPY", "155"))
 MAX_CARRY_FILES = 3          # 直前ターンの成果物を何件まで次のターンに持ち越すか
@@ -90,7 +95,8 @@ TASK_BUDGET_TOKENS = int(os.environ.get("TASK_BUDGET_TOKENS", "50000"))
 
 # ターン開始前に必要な余力（円）。上限判定はターン開始前にしか行えないため、
 # 残額ぎりぎりで重い依頼を始めると大幅に超過する。あらかじめ余力を要求する。
-TURN_RESERVE_YEN = float(os.environ.get("TURN_RESERVE_YEN", "120"))
+TURN_RESERVE_YEN = float(os.environ.get("TURN_RESERVE_YEN", "170"))   # pptx がまだ使えるとき
+LIGHT_RESERVE_YEN = float(os.environ.get("LIGHT_RESERVE_YEN", "30"))  # pptx 使い切り後
 
 # ログイン総当たり対策。インターネットに公開するとクラス共通パスワードが
 # 総当たりの標的になるため、IP単位で失敗回数を数えて締め出す。
@@ -187,7 +193,8 @@ def _banner() -> None:
         f"  日次上限    : {DAILY_YEN_CAP:.0f} 円/人 ／ 全体 {DAILY_TOTAL_YEN_CAP:.0f} 円",
         f"  通算上限    : {PERIOD_YEN_CAP:.0f} 円/人 ／ 全体 {PERIOD_TOTAL_YEN_CAP:.0f} 円"
         f"（現在 {db.spent_period_total_usd() * USD_JPY:.1f} 円）",
-        f"  必要余力    : 1依頼あたり {TURN_RESERVE_YEN:.0f} 円（残額がこれ未満なら開始しない）",
+        f"  スライド    : 学生1人あたり {PPTX_LIMIT} 回まで（1回 約156円）",
+        f"  必要余力    : {TURN_RESERVE_YEN:.0f} 円（pptx可）／ {LIGHT_RESERVE_YEN:.0f} 円（pptx使用済）",
         f"  ログイン防御: {LOGIN_MAX_FAILS}回失敗で{LOGIN_LOCK_SEC // 60}分ロック",
         f"  APIキー     : {'設定済み' if os.environ.get('ANTHROPIC_API_KEY') else '★未設定★'}",
         f"  データ保存先: {DATA_DIR}"
@@ -223,16 +230,23 @@ def _usage_payload(student_id: str) -> dict[str, Any]:
         "cap_yen": DAILY_YEN_CAP,
         "period_yen": db.spent_period_usd(student_id) * USD_JPY,
         "period_cap_yen": PERIOD_YEN_CAP,
+        "pptx_used": db.count_artifacts(student_id, "pptx"),
+        "pptx_limit": PPTX_LIMIT,
     }
 
 
-def _check_caps(student_id: str) -> None:
+def _check_caps(student_id: str, heavy: bool = True) -> None:
     """上限を確認する。
 
     上限判定はターン開始前にしか行えず、1ターンの途中では止められない。
-    そのため残額ぎりぎりで重い依頼（スライド生成など）を始めると大幅に超過する。
-    実測で1ターン262円かかったことがあるため、TURN_RESERVE_YEN の余力を要求する。
+    そのため残額ぎりぎりで重い依頼を始めると超過する。
+
+    必要な余力は「そのターンで起きうる最大費用」で決める。
+      heavy=True  … pptx がまだ使える。実測 約156円のターンがありうる
+      heavy=False … pptx は使い切り。最大でも Excel 生成の 約18円
+    使い切った学生に156円の余力を要求すると、使えるはずの予算を無駄にする。
     """
+    reserve = TURN_RESERVE_YEN if heavy else LIGHT_RESERVE_YEN
     checks = (
         (db.spent_today_usd(student_id) * USD_JPY, DAILY_YEN_CAP, "本日のあなた"),
         (db.spent_today_total_usd() * USD_JPY, DAILY_TOTAL_YEN_CAP, "本日のクラス全体"),
@@ -245,12 +259,11 @@ def _check_caps(student_id: str) -> None:
                 status_code=429,
                 detail=f"{label}の利用上限（{cap:.0f}円）に達しました。教員に連絡してください。",
             )
-        if spent + TURN_RESERVE_YEN > cap:
+        if spent + reserve > cap:
             raise HTTPException(
                 status_code=429,
                 detail=f"{label}の残額が {cap - spent:.0f} 円です。"
-                       f"重い依頼で超過する可能性があるため、ここで停止しました"
-                       f"（1回の依頼に {TURN_RESERVE_YEN:.0f} 円の余力が必要）。",
+                       f"1回の依頼に {reserve:.0f} 円の余力が必要なため、ここで停止しました。",
             )
 
 
@@ -390,7 +403,19 @@ def _login_failed(ip: str) -> None:
               f"{LOGIN_LOCK_SEC // 60}分ロックしました", flush=True)
 
 
-def _request_kwargs(messages: list[Any]) -> dict[str, Any]:
+def _skills_for(student_id: str) -> list[str]:
+    """この学生に渡すスキル。上限に達した pptx は外す。
+
+    スキルを渡さなければモデルはスライドを作れず「作成できない」と答える。
+    依頼を受け付けてから拒否するのではなく、費用が発生する前に封じる。
+    """
+    if PPTX_LIMIT <= 0 or db.count_artifacts(student_id, "pptx") >= PPTX_LIMIT:
+        return [s for s in SKILL_IDS if s != "pptx"]
+    return SKILL_IDS
+
+
+def _request_kwargs(messages: list[Any], skills: list[str] | None = None) -> dict[str, Any]:
+    skills = SKILL_IDS if skills is None else skills
     return dict(
         model=MODEL,
         max_tokens=16000,
@@ -402,7 +427,7 @@ def _request_kwargs(messages: list[Any]) -> dict[str, Any]:
         container={
             "skills": [
                 {"type": "anthropic", "skill_id": sid, "version": "latest"}
-                for sid in SKILL_IDS
+                for sid in skills
             ]
         },
         tools=[{"type": "code_execution_20260521", "name": "code_execution"}],
@@ -448,11 +473,12 @@ def _harvest_files(response: Any, student_id: str) -> list[dict[str, str]]:
             if name is None:
                 continue
             client.beta.files.download(file_id).write_to_file(out_dir / name)
+            db.record_artifact(student_id, name)
             saved.append({"name": name, "file_id": file_id})
     return saved
 
 
-def _run_turn(messages: list[Any]) -> tuple[Any, dict[str, int]]:
+def _run_turn(messages: list[Any], skills: list[str]) -> tuple[Any, dict[str, int]]:
     """1ターン実行。pause_turn は上限つきで自動再開する。
 
     code execution はサーバ側ツールなので、実行が長引くと stop_reason=pause_turn で
@@ -461,17 +487,30 @@ def _run_turn(messages: list[Any]) -> tuple[Any, dict[str, int]]:
     totals = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
     response = None
 
-    for _ in range(MAX_RESUME):
-        response = client.beta.messages.create(**_request_kwargs(messages))
+    for attempt in range(1, MAX_RESUME + 1):
+        response = client.beta.messages.create(**_request_kwargs(messages, skills))
         u = response.usage
+        cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+        cr = getattr(u, "cache_read_input_tokens", 0) or 0
         totals["input"] += u.input_tokens or 0
         totals["output"] += u.output_tokens or 0
-        totals["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
-        totals["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
+        totals["cache_write"] += cw
+        totals["cache_read"] += cr
+
+        # ターン内部の各回を可視化する。pause_turn の再送が繰り返されると
+        # そのたびに肥大化した文脈を送り直してキャッシュを書き、費用が跳ねる。
+        yen = _cost_usd(input_tokens=u.input_tokens or 0, output_tokens=u.output_tokens or 0,
+                        cache_write=cw, cache_read=cr) * USD_JPY
+        print(f"  [turn] {attempt}/{MAX_RESUME} stop={response.stop_reason} "
+              f"in={u.input_tokens or 0:,} out={u.output_tokens or 0:,} "
+              f"cache_w={cw:,} cache_r={cr:,} → {yen:.1f}円", flush=True)
 
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "pause_turn":
             break
+    else:
+        print(f"  [turn] pause_turn が {MAX_RESUME} 回続いたため打ち切りました。"
+              f"依頼が重すぎる可能性があります。", flush=True)
 
     return response, totals
 
@@ -537,7 +576,10 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     if not text:
         raise HTTPException(status_code=400, detail="メッセージが空です")
 
-    _check_caps(student_id)
+    # pptx を使い切っていれば、そのスキル自体を渡さない。
+    # 残り回数によって、そのターンで起きうる最大費用が変わる。
+    skills = _skills_for(student_id)
+    _check_caps(student_id, heavy="pptx" in skills)
 
     messages = _restore_history(student_id)
 
@@ -549,7 +591,7 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     messages.append({"role": "user", "content": blocks})
 
     try:
-        response, totals = _run_turn(messages)
+        response, totals = _run_turn(messages, skills)
     except anthropic.BadRequestError as exc:
         # ディスクから復元した履歴が API に受け付けられないケース。
         # 学生を詰まらせないよう、履歴を捨てて今回の発言だけで一度やり直す。
@@ -558,7 +600,7 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
         CARRY[student_id] = []
         messages = HISTORY[student_id] = [{"role": "user", "content": [{"type": "text", "text": text}]}]
         try:
-            response, totals = _run_turn(messages)
+            response, totals = _run_turn(messages, skills)
         except anthropic.APIStatusError as exc2:
             HISTORY[student_id] = []
             raise HTTPException(
@@ -624,6 +666,8 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
         "cap_yen": DAILY_YEN_CAP,
         "period_yen": db.spent_period_usd(student_id) * USD_JPY,
         "period_cap_yen": PERIOD_YEN_CAP,
+        "pptx_used": db.count_artifacts(student_id, "pptx"),
+        "pptx_limit": PPTX_LIMIT,
     }
 
 

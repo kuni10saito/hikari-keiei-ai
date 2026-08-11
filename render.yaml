@@ -48,10 +48,19 @@ services:
       - key: DAILY_YEN_CAP
         value: "300"
       - key: DAILY_TOTAL_YEN_CAP
-        value: "800"
+        value: "600"
       - key: PERIOD_YEN_CAP
-        value: "1000"
+        value: "500"
       - key: PERIOD_TOTAL_YEN_CAP
-        value: "2500"
+        value: "1200"
       - key: USD_JPY
         value: "155"
+
+      # スライドは1回 約156円（Excel の約9倍）。学生1人あたりの作成回数。
+      # 0 にすると pptx スキル自体を渡さず、完全に封じられる。
+      - key: PPTX_LIMIT
+        value: "1"
+
+      # 思考の深さ。成果物の質が落ちるようなら high に戻す。
+      - key: EFFORT
+        value: "medium"

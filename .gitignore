@@ -7,8 +7,11 @@ secrets.*
 *.pem
 
 # 使用量DB（利用上限の判定に使う。ローカルの実績を公開しない）
+# バックアップには学籍番号と会話履歴が入るので必ず除外すること
 usage.sqlite3
 usage.sqlite3-*
+usage_backup_*.sqlite3
+*.sqlite3
 
 # 学生の生成物（個人の成果物なので置かない）
 outputs/

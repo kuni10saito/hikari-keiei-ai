@@ -46,6 +46,18 @@ def init() -> None:
         c.execute("CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (student_id, day)")
         c.execute(
             """
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL,
+                ts         TEXT NOT NULL,
+                filename   TEXT NOT NULL,
+                ext        TEXT NOT NULL
+            )
+            """
+        )
+        c.execute("CREATE INDEX IF NOT EXISTS idx_art ON artifacts (student_id, ext)")
+        c.execute(
+            """
             CREATE TABLE IF NOT EXISTS history (
                 student_id TEXT PRIMARY KEY,
                 updated_at TEXT NOT NULL,
@@ -120,6 +132,31 @@ def spent_period_total_usd() -> float:
     with _conn() as c:
         row = c.execute("SELECT COALESCE(SUM(usd), 0) AS s FROM usage").fetchone()
     return float(row["s"])
+
+
+# --------------------------------------------------------------------------
+# 生成物の記録
+#
+# 種類ごとの作成回数を数えるために使う。スライド(pptx)は1回あたり約156円と
+# 突出して高いため、回数制限をかける根拠になる。
+# --------------------------------------------------------------------------
+
+def record_artifact(student_id: str, filename: str) -> None:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO artifacts (student_id, ts, filename, ext) VALUES (?,?,?,?)",
+            (student_id, datetime.datetime.now().isoformat(timespec="seconds"), filename, ext),
+        )
+
+
+def count_artifacts(student_id: str, ext: str) -> int:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) n FROM artifacts WHERE student_id = ? AND ext = ?",
+            (student_id, ext),
+        ).fetchone()
+    return int(row["n"])
 
 
 # --------------------------------------------------------------------------
