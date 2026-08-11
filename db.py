@@ -209,6 +209,22 @@ def summary() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def recent_turns(limit: int = 50) -> list[dict]:
+    """管理用：1ターンずつの明細。
+
+    合計だけ見ても「どの依頼が高かったのか」が分からない。
+    費用の大半はキャッシュ書込なので、依頼文と並べて見られるようにする。
+    """
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, student_id, ts, input_tokens, output_tokens,"
+            "       cache_write, cache_read, usd, prompt"
+            " FROM usage ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def reset_student(student_id: str) -> dict[str, int]:
     """1人ぶんの使用量・履歴・生成物記録を消す。件数を返す。"""
     with _conn() as c:

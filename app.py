@@ -723,6 +723,36 @@ def admin_usage(key: str = ""):
     return rows
 
 
+@app.get("/api/admin/turns")
+def admin_turns(key: str = "", limit: int = 50):
+    """1ターンずつの明細。どの依頼が高かったのかを特定する。
+
+    合計だけでは「スライドが高い」までしか分からず、
+    実際にどの発言で何円かかったのかを追えない。
+    """
+    _require_admin(key)
+    pi, po = _prices()
+    out = []
+    for r in db.recent_turns(min(max(limit, 1), 200)):
+        out.append({
+            "ts": r["ts"],
+            "student_id": r["student_id"],
+            "yen": round((r["usd"] or 0) * USD_JPY, 1),
+            "prompt": r["prompt"],
+            "tokens": {
+                "input": r["input_tokens"], "output": r["output_tokens"],
+                "cache_write": r["cache_write"], "cache_read": r["cache_read"],
+            },
+            "yen_breakdown": {
+                "入力": round((r["input_tokens"] or 0) * pi * USD_JPY, 1),
+                "キャッシュ書込": round((r["cache_write"] or 0) * pi * 1.25 * USD_JPY, 1),
+                "キャッシュ読出": round((r["cache_read"] or 0) * pi * 0.10 * USD_JPY, 1),
+                "出力": round((r["output_tokens"] or 0) * po * USD_JPY, 1),
+            },
+        })
+    return out
+
+
 @app.get("/api/admin/status")
 def admin_status(key: str = ""):
     """設定と現状を1画面で確認する。

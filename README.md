@@ -114,6 +114,7 @@ $env:DAILY_TOTAL_YEN_CAP = "8000"
 |---|---|
 | `/api/admin/status?key=...` | 設定と現状の一覧。**`disk_ok` が最重要** |
 | `/api/admin/usage?key=...` | 学生ごとの累計と費用の内訳 |
+| `/api/admin/turns?key=...` | **1ターンずつの明細**。どの依頼が高かったか特定できる |
 | `/api/admin/reset?key=...&student_id=28b0113` | 指定した学生の使用量・履歴・生成物記録を消す |
 
 ### `disk_ok`
