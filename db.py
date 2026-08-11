@@ -190,15 +190,39 @@ def clear_history(student_id: str) -> None:
 
 
 def summary() -> list[dict]:
-    """管理用：学生ごとの累計。"""
+    """管理用：学生ごとの累計。
+
+    cache_write は費用の9割以上を占めることがあるので必ず出す。
+    これが見えないと、高額になった原因が管理画面から追えない。
+    """
     with _conn() as c:
         rows = c.execute(
             "SELECT student_id,"
             "       COUNT(*)                AS turns,"
             "       SUM(input_tokens)       AS input_tokens,"
             "       SUM(output_tokens)      AS output_tokens,"
+            "       SUM(cache_write)        AS cache_write,"
             "       SUM(cache_read)         AS cache_read,"
             "       SUM(usd)                AS usd"
             " FROM usage GROUP BY student_id ORDER BY usd DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def reset_student(student_id: str) -> dict[str, int]:
+    """1人ぶんの使用量・履歴・生成物記録を消す。件数を返す。"""
+    with _conn() as c:
+        counts = {
+            "usage": c.execute(
+                "SELECT COUNT(*) n FROM usage WHERE student_id=?", (student_id,)
+            ).fetchone()["n"],
+            "history": c.execute(
+                "SELECT COUNT(*) n FROM history WHERE student_id=?", (student_id,)
+            ).fetchone()["n"],
+            "artifacts": c.execute(
+                "SELECT COUNT(*) n FROM artifacts WHERE student_id=?", (student_id,)
+            ).fetchone()["n"],
+        }
+        for table in ("usage", "history", "artifacts"):
+            c.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
+    return counts

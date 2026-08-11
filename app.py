@@ -698,16 +698,101 @@ def usage(session: str | None = Cookie(default=None)):
     return _usage_payload(_require_student(session))
 
 
-@app.get("/api/admin/usage")
-def admin_usage(key: str = ""):
-    """教員用。ADMIN_KEY を環境変数で設定し、?key=... を付けて開く。"""
+def _require_admin(key: str) -> None:
     admin_key = os.environ.get("ADMIN_KEY", "")
     if not admin_key or not secrets.compare_digest(key, admin_key):
         raise HTTPException(status_code=403, detail="forbidden")
+
+
+@app.get("/api/admin/usage")
+def admin_usage(key: str = ""):
+    """教員用。ADMIN_KEY を環境変数で設定し、?key=... を付けて開く。"""
+    _require_admin(key)
+    pi, po = _prices()
     rows = db.summary()
     for r in rows:
         r["yen"] = round((r["usd"] or 0) * USD_JPY, 1)
+        # 費用の内訳。cache_write が9割を超えることがあり、そこが見えないと
+        # 高額になった原因を管理画面から追えない。
+        r["yen_breakdown"] = {
+            "入力": round((r["input_tokens"] or 0) * pi * USD_JPY, 1),
+            "キャッシュ書込": round((r["cache_write"] or 0) * pi * 1.25 * USD_JPY, 1),
+            "キャッシュ読出": round((r["cache_read"] or 0) * pi * 0.10 * USD_JPY, 1),
+            "出力": round((r["output_tokens"] or 0) * po * USD_JPY, 1),
+        }
     return rows
+
+
+@app.get("/api/admin/status")
+def admin_status(key: str = ""):
+    """設定と現状を1画面で確認する。
+
+    最重要は disk_ok。False なら永続ディスクが効いておらず、
+    再デプロイのたびに使用量がリセットされて上限が無意味になる。
+    """
+    _require_admin(key)
+    disk_ok = os.environ.get("DATA_DIR") is not None and str(DATA_DIR) != str(BASE)
+    return {
+        "disk_ok": disk_ok,
+        "data_dir": str(DATA_DIR),
+        "db_exists": db.DB_PATH.exists(),
+        "warning": None if disk_ok else
+                   "永続ディスクが効いていません。再デプロイのたびに使用量が"
+                   "リセットされ、利用上限が機能しません。Render の "
+                   "Settings → Disks で /var/data を追加してください。",
+        "model": MODEL,
+        "effort": EFFORT,
+        "roster": sorted(ROSTER),
+        "pptx_limit": PPTX_LIMIT,
+        "caps_yen": {
+            "daily_per_student": DAILY_YEN_CAP,
+            "daily_total": DAILY_TOTAL_YEN_CAP,
+            "period_per_student": PERIOD_YEN_CAP,
+            "period_total": PERIOD_TOTAL_YEN_CAP,
+        },
+        "spent_yen": {
+            "today_total": round(db.spent_today_total_usd() * USD_JPY, 1),
+            "period_total": round(db.spent_period_total_usd() * USD_JPY, 1),
+            "per_student": {
+                sid: {
+                    "today": round(db.spent_today_usd(sid) * USD_JPY, 1),
+                    "period": round(db.spent_period_usd(sid) * USD_JPY, 1),
+                    "pptx_used": db.count_artifacts(sid, "pptx"),
+                }
+                for sid in sorted(ROSTER)
+            },
+        },
+    }
+
+
+@app.post("/api/admin/reset")
+@app.get("/api/admin/reset")
+def admin_reset(key: str = "", student_id: str = ""):
+    """指定した学生の使用量・会話履歴・生成物記録を消す。
+
+    Render 上では DB を直接触れないため、ここから消せるようにしてある。
+    誤操作を避けるため対象の学籍番号を必須にし、全消しは用意しない。
+    """
+    _require_admin(key)
+    target = _norm(student_id)
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="student_id を指定してください"
+                   "（例: /api/admin/reset?key=...&student_id=28b0113）",
+        )
+    if target not in ROSTER:
+        raise HTTPException(status_code=404, detail=f"「{target}」は名簿にありません")
+
+    deleted = db.reset_student(target)
+    HISTORY.pop(target, None)
+    CARRY.pop(target, None)
+    print(f"[ADMIN] {target} をリセット: {deleted}", flush=True)
+    return {
+        "student_id": target,
+        "deleted": deleted,
+        "spent_yen_now": round(db.spent_period_usd(target) * USD_JPY, 1),
+    }
 
 
 app.mount("/", StaticFiles(directory=BASE / "static", html=True), name="static")

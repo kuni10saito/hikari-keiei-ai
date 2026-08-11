@@ -106,13 +106,32 @@ $env:DAILY_TOTAL_YEN_CAP = "8000"
 - **Secure cookie** — HTTPS 経由のときだけ自動で付与され、平文接続に載らない
 - **二重の支出上限** — 学生ごと `DAILY_YEN_CAP` に加え、クラス全体 `DAILY_TOTAL_YEN_CAP`
 
-## 使用量の確認（教員用）
+## 教員用API
 
-```
-http://localhost:8000/api/admin/usage?key=<ADMIN_KEY>
-```
+いずれも `?key=<ADMIN_KEY>` が必要。`<>` は付けずに値だけを書く。
 
-学生ごとの累計ターン数・トークン数・概算円が返る。
+| URL | 用途 |
+|---|---|
+| `/api/admin/status?key=...` | 設定と現状の一覧。**`disk_ok` が最重要** |
+| `/api/admin/usage?key=...` | 学生ごとの累計と費用の内訳 |
+| `/api/admin/reset?key=...&student_id=28b0113` | 指定した学生の使用量・履歴・生成物記録を消す |
+
+### `disk_ok`
+
+`false` なら永続ディスクが効いておらず、再デプロイのたびに使用量が
+リセットされて利用上限が機能しない。Render の Settings → Disks で
+`/var/data` を追加すること。
+
+### 費用の内訳
+
+`usage` は `yen_breakdown` を返す。**`キャッシュ書込` が9割を超えることがある**
+（実測: 2ターン392円のうち362.6円）。ここが見えないと高額の原因を追えない。
+
+### リセット
+
+Render 上では DB を直接触れないため API から消す。誤操作防止のため
+`student_id` は必須で、全消しは用意していない。
+**課題開始前に、動作確認で消費した分を必ずリセットすること。**
 
 ---
 
