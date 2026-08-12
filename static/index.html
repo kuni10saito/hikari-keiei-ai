@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>株式会社ヒカリ 経営演習AI</title>
+<title>経営演習AI</title>
 <style>
   :root {
     color-scheme: light;
@@ -180,7 +180,7 @@
 <body>
 
 <header>
-  <h1>株式会社ヒカリ 経営演習AI</h1>
+  <h1 id="appTitle">経営演習AI</h1>
   <span class="who" id="who"></span>
   <button id="reset" hidden>会話をリセット</button>
   <button id="logout" hidden>ログアウト</button>
@@ -203,30 +203,36 @@
     <div class="card" id="cocard"></div>
 
     <div class="card">
-      <h2>収益性 <span class="sub">第43期</span></h2>
+      <h2>収益性 <span class="sub" id="profitPeriod"></span></h2>
       <p class="hero-label">営業利益率</p>
       <p class="hero-value" id="heroVal">—</p>
       <p class="hero-delta" id="heroDelta"></p>
       <div class="kpis" id="kpis" style="margin-top:.8rem"></div>
     </div>
 
-    <div class="card">
-      <h2>売上高と営業利益の推移 <span class="sub">単位：百万円</span></h2>
+    <div class="card" id="cardTrend" hidden>
+      <h2>売上高と営業利益の推移 <span class="sub" id="trendUnit"></span></h2>
       <div class="multiples">
         <div><p class="mult-title">売上高</p><div id="cSales"></div></div>
         <div><p class="mult-title">営業利益</p><div id="cProfit"></div></div>
       </div>
-      <p class="note">売上は3期で4.4%減にとどまるが、営業利益は83.6%減。</p>
+      <p class="note" id="trendNote"></p>
     </div>
 
-    <div class="card">
-      <h2>セグメント別 売上総利益率 <span class="sub">第43期</span></h2>
+    <div class="card" id="cardSegGm" hidden>
+      <h2>セグメント別 売上総利益率 <span class="sub" id="segGmPeriod"></span></h2>
       <div id="cSegGm"></div>
-      <p class="note">左の括弧内は売上構成比。構成比が最も大きい卸売の利益率が最も低い。</p>
+      <p class="note">左の括弧内は売上構成比。</p>
+    </div>
+
+    <div class="card" id="cardSga" hidden>
+      <h2>販売費及び一般管理費の構成 <span class="sub" id="sgaSub"></span></h2>
+      <div id="cSga"></div>
+      <p class="note" id="sgaNote"></p>
     </div>
 
     <div class="card">
-      <h2>売上構成比 <span class="sub">第43期</span></h2>
+      <h2>売上構成比 <span class="sub" id="mixPeriod"></span></h2>
       <div id="cSegMix"></div>
       <div class="legend" id="mixLegend"></div>
     </div>
@@ -274,8 +280,11 @@ const SVGNS = "http://www.w3.org/2000/svg";
 let busy = false, DATA = null;
 
 /* ---------------- 数値整形 ---------------- */
-const man = (thousandYen) => thousandYen / 1000;                 // 千円 → 百万円
-const fmtMan = (v) => Math.round(man(v)).toLocaleString("ja-JP");
+// データは千円単位で持ち、表示単位は company_*_data.json の display で決める。
+// 会社によって規模が2桁違うため（ヒカリ 61億円 / パコラボ 2,928万円）、
+// 一律に百万円表示すると小さい会社の数字が潰れる。
+let UNIT = { unit: "百万円", divisor: 1000 };
+const fmtMan = (v) => Math.round(v / UNIT.divisor).toLocaleString("ja-JP");
 const pct = (n, d) => (d ? (n / d) * 100 : 0);
 const p1 = (v) => v.toFixed(1);
 const p2 = (v) => v.toFixed(2);
@@ -376,7 +385,7 @@ function hBarChart(host, rows) {           // rows: [{label, value, tip}]
     tipify(p, r.tip);
 
     const v = el("text", { x: padL + w + 6, y: y + bh - 3, class: "vlab strong" }, s);
-    v.textContent = p1(r.value) + "%";
+    v.textContent = p1(r.value) + (r.suffix || "%");
   });
 }
 
@@ -395,7 +404,7 @@ function stackedBar(host, parts) {         // parts: [{label, value, color}]
             : last ? barPathR(x, 4, w, bh, r)
             : `M${x},4 h${w} v${bh} h${-w} Z`;
     const p = el("path", { d, fill: part.color }, s);
-    tipify(p, `${part.label}　${p1(pct(part.value, total))}%（${fmtMan(part.value)} 百万円）`);
+    tipify(p, `${part.label}　${p1(pct(part.value, total))}%（${fmtMan(part.value)} ${UNIT.unit}）`);
 
     // ラベルは収まるときだけ内側に置く（はみ出し・切り詰めはしない）
     const share = p1(pct(part.value, total)) + "%";
@@ -412,9 +421,17 @@ function stackedBar(host, parts) {         // parts: [{label, value, color}]
 /* ---------------- ダッシュボード描画 ---------------- */
 function renderDashboard(d) {
   DATA = d;
+  UNIT = d.display || UNIT;
   const P = d.pl, n = P.sales.length - 1;
+  const period = d.periods[n];
   const sales = P.sales[n], gp = P.gross_profit[n], op = P.operating_profit[n];
   const opm = pct(op, sales), opmPrev = pct(P.operating_profit[n - 1], P.sales[n - 1]);
+
+  // 会社名と期は会社ごとに変わるのでデータから流し込む。
+  // ここをハードコードすると、会社を切り替えたときに前の会社の表示が残る。
+  document.title = `${d.company.name} 経営演習AI`;
+  $("appTitle").textContent = `${d.company.name} 経営演習AI`;
+  $("profitPeriod").textContent = period;
 
   // 会社カード
   $("cocard").innerHTML = `
@@ -430,42 +447,84 @@ function renderDashboard(d) {
   // ヒーロー（このビューで1つだけ）
   // 差は「表示している丸め済みの値」から計算する。生の値で引くと
   // 0.29 − 0.99 が 0.71pt と出て、画面の数字を引き算した学生と食い違う。
-  const cur = Number(p2(opm)), prev = Number(p2(opmPrev));
-  const diff = cur - prev;
   $("heroVal").textContent = p2(opm) + "%";
-  $("heroDelta").innerHTML =
-    `<span class="dir ${diff < 0 ? "down" : "up"}">${diff < 0 ? "▼" : "▲"} ${p2(Math.abs(diff))}pt</span>`
-    + ` 前期比（第42期 ${p2(opmPrev)}%）`;
+  if (n >= 1) {
+    const cur = Number(p2(opm)), prev = Number(p2(opmPrev));
+    const diff = cur - prev;
+    $("heroDelta").innerHTML =
+      `<span class="dir ${diff < 0 ? "down" : "up"}">${diff < 0 ? "▼" : "▲"} ${p2(Math.abs(diff))}pt</span>`
+      + ` 前期比（${d.periods[n - 1]} ${p2(opmPrev)}%）`;
+  } else {
+    // 1期分しか無い会社では比較対象が存在しない。推測で埋めない。
+    $("heroDelta").textContent = "前期の損益は決算書が未入手のため比較できません";
+  }
 
   // KPI
   const eq = pct(d.bs.net_assets, d.bs.total_assets);
-  $("kpis").innerHTML = [
-    ["売上高", fmtMan(sales), "百万円"],
+  const kpis = [
+    ["売上高", fmtMan(sales), UNIT.unit],
     ["売上総利益率", p1(pct(gp, sales)), "%"],
     ["自己資本比率", p1(eq), "%"],
-    ["営業CF", fmtMan(d.cf.operating), "百万円"],
-  ].map(([k, v, u]) =>
+  ];
+  // 中小企業はキャッシュフロー計算書の作成義務が無く、決算書に無いことがある。
+  kpis.push(d.cf && d.cf.operating != null
+    ? ["営業CF", fmtMan(d.cf.operating), UNIT.unit]
+    : ["当期純利益", fmtMan(P.net_income[n]), UNIT.unit]);
+  $("kpis").innerHTML = kpis.map(([k, v, u]) =>
     `<div class="kpi"><div class="k">${k}</div><div class="v">${v}<span class="u">${u}</span></div></div>`
   ).join("");
 
   // 推移（小倍数：2つの独立した軸。1枚に2軸は使わない）
-  columnChart($("cSales"), d.periods, P.sales, "百万円");
-  columnChart($("cProfit"), d.periods, P.operating_profit, "百万円");
+  // 1期分しか無い会社では成立しないのでカードごと隠す。
+  $("cardTrend").hidden = n < 1;
+  if (n >= 1) {
+    $("trendUnit").textContent = `単位：${UNIT.unit}`;
+    columnChart($("cSales"), d.periods, P.sales, UNIT.unit);
+    columnChart($("cProfit"), d.periods, P.operating_profit, UNIT.unit);
+    const ds = (P.sales[n] / P.sales[0] - 1) * 100;
+    const dp = (P.operating_profit[n] / P.operating_profit[0] - 1) * 100;
+    $("trendNote").textContent =
+      `${d.periods.length}期で売上は${p1(Math.abs(ds))}%${ds < 0 ? "減" : "増"}、`
+      + `営業利益は${p1(Math.abs(dp))}%${dp < 0 ? "減" : "増"}。`;
+  }
 
-  // セグメント別 粗利率
   const total = d.segments.reduce((a, s) => a + s.sales, 0);
-  hBarChart($("cSegGm"), d.segments.map((s) => ({
-    label: `${s.short}（${p1(pct(s.sales, total))}%）`,
-    value: pct(s.gross_profit, s.sales),
-    tip: `${s.name}　売上総利益率 ${p1(pct(s.gross_profit, s.sales))}%`
-       + `（売上総利益 ${fmtMan(s.gross_profit)} 百万円）`,
-  })));
+
+  // セグメント別 粗利率。決算書に区分原価が無い会社では出せない。
+  const hasSegGp = d.segments.every((s) => s.gross_profit != null);
+  $("cardSegGm").hidden = !hasSegGp;
+  if (hasSegGp) {
+    $("segGmPeriod").textContent = period;
+    hBarChart($("cSegGm"), d.segments.map((s) => ({
+      label: `${s.short}（${p1(pct(s.sales, total))}%）`,
+      value: pct(s.gross_profit, s.sales),
+      tip: `${s.name}　売上総利益率 ${p1(pct(s.gross_profit, s.sales))}%`
+         + `（売上総利益 ${fmtMan(s.gross_profit)} ${UNIT.unit}）`,
+    })));
+  }
+
+  // 販管費の構成。粗利を食い潰している構造を見せる。
+  $("cardSga").hidden = !d.sga;
+  if (d.sga) {
+    $("sgaSub").textContent = `${period}／単位：${UNIT.unit}`;
+    hBarChart($("cSga"), d.sga.items.map((it) => ({
+      label: it.name,
+      value: pct(it.amount, d.sga.total),
+      suffix: "%",
+      tip: `${it.name}　${fmtMan(it.amount)} ${UNIT.unit}`
+         + `（販管費の ${p1(pct(it.amount, d.sga.total))}%）`,
+    })));
+    $("sgaNote").textContent =
+      `販管費 ${fmtMan(d.sga.total)} ${UNIT.unit} の内訳。`
+      + (d.sga.note ? d.sga.note : "");
+  }
 
   // 構成比
   const colors = ["var(--s1)", "var(--s2)", "var(--s3)"];
   stackedBar($("cSegMix"), d.segments.map((s, i) => ({
     label: s.name, value: s.sales, color: colors[i],
   })));
+  $("mixPeriod").textContent = period;
   $("mixLegend").innerHTML = d.segments.map((s, i) =>
     `<span><i class="swatch" style="background:${colors[i]}"></i>${s.name}</span>`
   ).join("");
@@ -473,16 +532,19 @@ function renderDashboard(d) {
   // 表形式ビュー（色だけに依存させないための等価表現）
   $("tv").innerHTML = `
     <table class="tv">
-      <tr><th>損益（百万円）</th>${d.periods.map((p) => `<th>${p}</th>`).join("")}</tr>
+      <tr><th>損益（${UNIT.unit}）</th>${d.periods.map((p) => `<th>${p}</th>`).join("")}</tr>
       ${[["売上高", P.sales], ["売上総利益", P.gross_profit],
          ["営業利益", P.operating_profit], ["当期純利益", P.net_income]]
         .map(([k, arr]) => `<tr><td>${k}</td>${arr.map((v) => `<td>${fmtMan(v)}</td>`).join("")}</tr>`).join("")}
     </table>
     <table class="tv">
-      <tr><th>セグメント（第43期）</th><th>売上高</th><th>構成比</th><th>粗利</th><th>粗利率</th></tr>
+      <tr><th>売上区分（${period}）</th><th>売上高</th><th>構成比</th>
+          ${hasSegGp ? "<th>粗利</th><th>粗利率</th>" : ""}</tr>
       ${d.segments.map((s) => `<tr><td>${s.name}</td><td>${fmtMan(s.sales)}</td>`
-        + `<td>${p1(pct(s.sales, total))}%</td><td>${fmtMan(s.gross_profit)}</td>`
-        + `<td>${p1(pct(s.gross_profit, s.sales))}%</td></tr>`).join("")}
+        + `<td>${p1(pct(s.sales, total))}%</td>`
+        + (hasSegGp ? `<td>${fmtMan(s.gross_profit)}</td>`
+                    + `<td>${p1(pct(s.gross_profit, s.sales))}%</td>` : "")
+        + `</tr>`).join("")}
     </table>`;
 }
 

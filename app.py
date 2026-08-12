@@ -38,10 +38,18 @@ BASE = pathlib.Path(__file__).parent
 COMPANY_FILE = os.environ.get("COMPANY_FILE", "company.md")
 COMPANY_MD = (BASE / COMPANY_FILE).read_text(encoding="utf-8")
 
-# ダッシュボード表示用の数値。company.md の【演習用・想定】と一致させること。
-COMPANY_DATA: dict[str, Any] = json.loads(
-    (BASE / "company_data.json").read_text(encoding="utf-8")
-)
+# ダッシュボード表示用の数値。上の .md の【演習用・想定】と一致させること。
+# 会社を差し替えるときは COMPANY_FILE と対で切り替わる必要がある。
+# 既定値を .md のファイル名から導出するので、
+#   COMPANY_FILE=company_b.md → company_b_data.json
+# が自動で選ばれ、環境変数を2つ設定する手間が要らない。
+_default_data = COMPANY_FILE.rsplit(".", 1)[0] + "_data.json"
+COMPANY_DATA_FILE = os.environ.get("COMPANY_DATA_FILE", _default_data)
+_data_path = BASE / COMPANY_DATA_FILE
+if not _data_path.exists():          # 既存の company_data.json への後方互換
+    _data_path = BASE / "company_data.json"
+COMPANY_DATA_FILE = _data_path.name
+COMPANY_DATA: dict[str, Any] = json.loads(_data_path.read_text(encoding="utf-8"))
 
 # 書き込むデータの置き場所。ローカルではこのフォルダ、Render では
 # 永続ディスクのマウント先（DATA_DIR=/var/data）を指す。
@@ -184,7 +192,8 @@ def _banner() -> None:
     lines = [
         "=" * 58,
         "  ヒカリ経営演習AI  起動しました",
-        f"  会社設定    : {COMPANY_FILE}（{len(COMPANY_MD):,} 文字）",
+        f"  会社設定    : {COMPANY_FILE}（{len(COMPANY_MD):,} 文字）"
+        f" ／ {COMPANY_DATA_FILE}",
         f"  名簿        : {len(ROSTER)}名 -> {sorted(ROSTER)}",
         f"  パスワード  : {'環境変数 CLASS_PASSWORD を使用' if from_env else '未設定のため既定値 hikari'}"
         f"（{len(_CLASS_PASSWORD_NORM)}文字）",

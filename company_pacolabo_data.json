@@ -1,0 +1,50 @@
+{
+  "_comment": "パコラボ株式会社 第10期 決算報告書の実額。単位は千円（company.md 系と揃えるため）。company_pacolabo.md と一致させること。前期以前の決算書が入手できたら periods と pl の配列に先頭から追加すると、推移チャートが自動で表示される。",
+  "display": { "unit": "千円", "divisor": 1 },
+  "company": {
+    "name": "パコラボ株式会社",
+    "founded": "第10期（令和6年7月1日〜令和7年6月30日）",
+    "business": "IT総合支援（PC販売・設置、ICT支援員派遣、Web/EC制作、パソコン塾）",
+    "area": "愛知県丹羽郡扶桑町",
+    "group": "独立系。資本金600万円／発行済株式120株",
+    "site": ""
+  },
+  "disclaimer": "パコラボ株式会社 第10期 決算報告書に基づく実データです。演習用であり社外配布はできません。",
+  "periods": ["第10期"],
+  "pl": {
+    "sales":            [29277],
+    "gross_profit":     [19965],
+    "operating_profit": [173],
+    "net_income":       [84]
+  },
+  "bs": {
+    "total_assets": 16577,
+    "net_assets": 1141,
+    "receivables": 3621,
+    "inventory": 975,
+    "interest_bearing_debt": 12764
+  },
+  "cf": null,
+  "segments": [
+    { "name": "手数料売上（ICT支援・制作）", "short": "手数料", "sales": 16586 },
+    { "name": "販売売上（PC販売・設置）",     "short": "販売",   "sales": 10467 },
+    { "name": "パソコン塾関連売上",           "short": "塾",     "sales": 2248 }
+  ],
+  "sga": {
+    "total": 19792,
+    "note": "上位10項目で販管費の89.2%を占める",
+    "items": [
+      { "name": "給料手当",   "amount": 6647 },
+      { "name": "地代家賃",   "amount": 3036 },
+      { "name": "役員報酬",   "amount": 1660 },
+      { "name": "減価償却費", "amount": 1627 },
+      { "name": "支払報酬",   "amount": 1208 },
+      { "name": "租税公課",   "amount": 1000 },
+      { "name": "諸会費",     "amount": 856 },
+      { "name": "旅費交通費", "amount": 563 },
+      { "name": "交際費",     "amount": 556 },
+      { "name": "水道光熱費", "amount": 496 },
+      { "name": "その他",     "amount": 2143 }
+    ]
+  }
+}
