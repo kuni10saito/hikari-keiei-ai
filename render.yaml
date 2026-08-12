@@ -32,6 +32,18 @@ services:
       - key: DATA_DIR
         value: /var/data
 
+      # ── 使用する会社 ──────────────────────────────
+      # ここを書き換えて push すると会社が切り替わる。
+      # 対になる _data.json はファイル名の規則で自動選択される。
+      #   company.md           → 株式会社ヒカリ（演習用の架空財務・3期）
+      #   company_pacolabo.md  → パコラボ株式会社（第10期決算・実データ）
+      #   company_atsuta.md    → あつた鶏飯 Re-Name Project（2026年5月・実データ）
+      #
+      # 切り替えたら会話履歴のリセットを忘れないこと:
+      #   /api/admin/reset?key=...&student_id=...
+      - key: COMPANY_FILE
+        value: company_atsuta.md
+
       # --- 秘密情報・個人情報：ダッシュボードで入力する ---
       # （リポジトリには保存されない。ROSTER は学籍番号なのでここに書かない）
       - key: ANTHROPIC_API_KEY
