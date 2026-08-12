@@ -772,6 +772,13 @@ def admin_status(key: str = ""):
     _require_admin(key)
     disk_ok = os.environ.get("DATA_DIR") is not None and str(DATA_DIR) != str(BASE)
     return {
+        # どの会社が読み込まれているか。COMPANY_FILE を変えたあとの確認用。
+        "company": {
+            "name": COMPANY_DATA.get("company", {}).get("name", ""),
+            "md_file": COMPANY_FILE,
+            "data_file": COMPANY_DATA_FILE,
+            "periods": COMPANY_DATA.get("periods", []),
+        },
         "disk_ok": disk_ok,
         "data_dir": str(DATA_DIR),
         "db_exists": db.DB_PATH.exists(),
