@@ -225,6 +225,12 @@
       <p class="note">左の括弧内は売上構成比。</p>
     </div>
 
+    <div class="card" id="cardExtra" hidden>
+      <h2 id="extraTitle"></h2>
+      <div id="cExtra"></div>
+      <p class="note" id="extraNote"></p>
+    </div>
+
     <div class="card" id="cardSga" hidden>
       <h2>販売費及び一般管理費の構成 <span class="sub" id="sgaSub"></span></h2>
       <div id="cSga"></div>
@@ -385,7 +391,8 @@ function hBarChart(host, rows) {           // rows: [{label, value, tip}]
     tipify(p, r.tip);
 
     const v = el("text", { x: padL + w + 6, y: y + bh - 3, class: "vlab strong" }, s);
-    v.textContent = p1(r.value) + (r.suffix || "%");
+    v.textContent = (r.raw ? r.value.toLocaleString("ja-JP") : p1(r.value))
+                  + (r.suffix != null ? r.suffix : "%");
   });
 }
 
@@ -456,21 +463,26 @@ function renderDashboard(d) {
       + ` 前期比（${d.periods[n - 1]} ${p2(opmPrev)}%）`;
   } else {
     // 1期分しか無い会社では比較対象が存在しない。推測で埋めない。
-    $("heroDelta").textContent = "前期の損益は決算書が未入手のため比較できません";
+    $("heroDelta").textContent = "比較できる前期間のデータがありません";
   }
 
   // KPI
-  const eq = pct(d.bs.net_assets, d.bs.total_assets);
+  // 会社によって手元にある資料が違う（貸借対照表が無い、CF計算書が無い等）。
+  // 無い指標は出さず、データ側が custom_kpis で補える形にする。
   const kpis = [
     ["売上高", fmtMan(sales), UNIT.unit],
     ["売上総利益率", p1(pct(gp, sales)), "%"],
-    ["自己資本比率", p1(eq), "%"],
   ];
-  // 中小企業はキャッシュフロー計算書の作成義務が無く、決算書に無いことがある。
-  kpis.push(d.cf && d.cf.operating != null
-    ? ["営業CF", fmtMan(d.cf.operating), UNIT.unit]
-    : ["当期純利益", fmtMan(P.net_income[n]), UNIT.unit]);
-  $("kpis").innerHTML = kpis.map(([k, v, u]) =>
+  if (d.bs && d.bs.total_assets) {
+    kpis.push(["自己資本比率", p1(pct(d.bs.net_assets, d.bs.total_assets)), "%"]);
+  }
+  if (d.cf && d.cf.operating != null) {
+    kpis.push(["営業CF", fmtMan(d.cf.operating), UNIT.unit]);
+  } else {
+    kpis.push([n >= 1 ? "当期純利益" : "利益", fmtMan(P.net_income[n]), UNIT.unit]);
+  }
+  for (const k of d.custom_kpis || []) kpis.push([k.label, k.value, k.unit || ""]);
+  $("kpis").innerHTML = kpis.slice(0, 4).map(([k, v, u]) =>
     `<div class="kpi"><div class="k">${k}</div><div class="v">${v}<span class="u">${u}</span></div></div>`
   ).join("");
 
@@ -501,6 +513,20 @@ function renderDashboard(d) {
       tip: `${s.name}　売上総利益率 ${p1(pct(s.gross_profit, s.sales))}%`
          + `（売上総利益 ${fmtMan(s.gross_profit)} ${UNIT.unit}）`,
     })));
+  }
+
+  // 会社ごとの「一番見せたい1枚」。データ側が持っていれば描く。
+  $("cardExtra").hidden = !d.extra_chart;
+  if (d.extra_chart) {
+    const e = d.extra_chart;
+    $("extraTitle").innerHTML = `${e.title}`
+      + (e.sub ? ` <span class="sub">${e.sub}</span>` : "");
+    hBarChart($("cExtra"), e.items.map((it) => ({
+      label: it.name, value: it.value, suffix: e.suffix || "",
+      raw: true,
+      tip: `${it.name}　${it.value.toLocaleString("ja-JP")}${e.suffix || ""}`,
+    })));
+    $("extraNote").textContent = e.note || "";
   }
 
   // 販管費の構成。粗利を食い潰している構造を見せる。

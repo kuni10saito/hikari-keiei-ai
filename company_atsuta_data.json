@@ -1,0 +1,105 @@
+{
+  "_comment": "あつた鶏飯（Re-Name Project）2026年5月の実績。単位は円。company_atsuta.md と一致させること。貸借対照表は資料に無いため bs は null。月次データが増えたら periods と pl の配列に追加すると推移チャートが自動表示される。 セグメントの gross_profit は意図的に持たせていない（原価が一律@480円/個で全チャネル60%になり、粗利率チャートが無意味になるため）。代わりに extra_chart でチャネル別の純利益を見せる。",
+  "display": {
+    "unit": "円",
+    "divisor": 1
+  },
+  "company": {
+    "name": "あつた鶏飯（Re-Name Project）",
+    "founded": "創業期（熱田ブランドマーク認定取得済み）",
+    "business": "缶詰の企画・販売（防災食「あつた鶏飯」／犬用「わんCochin」）",
+    "area": "名古屋市熱田区中心。マルシェ・EC・アウトドア店・自治体",
+    "group": "名古屋学院大学 杉浦礼子ゼミナール／製造：株式会社あいち食研／8名相当",
+    "site": "https://whitomato220401.wixsite.com/atsutakeihan"
+  },
+  "disclaimer": "Re-Name Project 2026年5月の実績値です。演習用であり社外配布はできません。",
+  "periods": [
+    "2026年5月"
+  ],
+  "pl": {
+    "sales": [
+      66000
+    ],
+    "gross_profit": [
+      39600
+    ],
+    "operating_profit": [
+      18500
+    ],
+    "net_income": [
+      18500
+    ]
+  },
+  "bs": null,
+  "cf": null,
+  "custom_kpis": [
+    {
+      "label": "販売数量",
+      "value": "55",
+      "unit": "個"
+    }
+  ],
+  "segments": [
+    {
+      "name": "イベント出店（GW×2日）",
+      "short": "イベント",
+      "sales": 37200
+    },
+    {
+      "name": "マルシェ（月例）",
+      "short": "マルシェ",
+      "sales": 16800
+    },
+    {
+      "name": "直接販売・SNS経由",
+      "short": "直接/SNS",
+      "sales": 12000
+    }
+  ],
+  "sga": {
+    "total": 21100,
+    "note": "出店費用が販管費の56.9%。これがチャネル別の利益を左右する。",
+    "items": [
+      {
+        "name": "出店費用",
+        "amount": 12000
+      },
+      {
+        "name": "交通費",
+        "amount": 4500
+      },
+      {
+        "name": "チラシ・POP制作費",
+        "amount": 3000
+      },
+      {
+        "name": "試食・備品費",
+        "amount": 1600
+      }
+    ]
+  },
+  "extra_chart": {
+    "title": "販売チャネル別の純利益",
+    "sub": "2026年5月／単位：円",
+    "note": "売上最大はイベント出店（37,200円）だが、純利益最大はマルシェ（6,180円）。出店費用が効いている。",
+    "suffix": "円",
+    "items": [
+      {
+        "name": "マルシェ",
+        "value": 6180
+      },
+      {
+        "name": "イベント2日",
+        "value": 5820
+      },
+      {
+        "name": "大学販売",
+        "value": 3400
+      },
+      {
+        "name": "SNS・知人",
+        "value": 3100
+      }
+    ]
+  }
+}
