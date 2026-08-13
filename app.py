@@ -21,6 +21,7 @@ import re
 import secrets
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import anthropic
@@ -50,6 +51,18 @@ if not _data_path.exists():          # 既存の company_data.json への後方�
     _data_path = BASE / "company_data.json"
 COMPANY_DATA_FILE = _data_path.name
 COMPANY_DATA: dict[str, Any] = json.loads(_data_path.read_text(encoding="utf-8"))
+
+# 部門AI（サブエージェント）の定義。agents/<会社キー>/<部門>.md を読む。
+# 会社キーは company_atsuta.md → "atsuta"。無ければ部門機能は無効。
+_company_key = COMPANY_FILE.rsplit(".", 1)[0].replace("company_", "") or "default"
+AGENTS_DIR = BASE / "agents" / _company_key
+AGENTS: dict[str, str] = {
+    f.stem: f.read_text(encoding="utf-8")
+    for f in sorted(AGENTS_DIR.glob("*.md"))
+} if AGENTS_DIR.is_dir() else {}
+
+# 1ターンで起動できる部門数の上限。増やすほど費用が比例して増える。
+MAX_AGENTS_PER_TURN = int(os.environ.get("MAX_AGENTS_PER_TURN", "4"))
 
 # 書き込むデータの置き場所。ローカルではこのフォルダ、Render では
 # 永続ディスクのマウント先（DATA_DIR=/var/data）を指す。
@@ -204,6 +217,9 @@ def _banner() -> None:
         f"（現在 {db.spent_period_total_usd() * USD_JPY:.1f} 円）",
         f"  スライド    : 学生1人あたり {PPTX_LIMIT} 回まで（1回 約156円）",
         f"  必要余力    : {TURN_RESERVE_YEN:.0f} 円（pptx可）／ {LIGHT_RESERVE_YEN:.0f} 円（pptx使用済）",
+        f"  部門AI      : {len(AGENTS)}部門"
+        f"{'（' + ', '.join('@'+a for a in sorted(AGENTS)) + '）' if AGENTS else '（この会社には定義なし）'}"
+        f" ／ 1ターン最大 {MAX_AGENTS_PER_TURN} 部門",
         f"  ログイン防御: {LOGIN_MAX_FAILS}回失敗で{LOGIN_LOCK_SEC // 60}分ロック",
         f"  APIキー     : {'設定済み' if os.environ.get('ANTHROPIC_API_KEY') else '★未設定★'}",
         f"  データ保存先: {DATA_DIR}"
@@ -241,6 +257,7 @@ def _usage_payload(student_id: str) -> dict[str, Any]:
         "period_cap_yen": PERIOD_YEN_CAP,
         "pptx_used": db.count_artifacts(student_id, "pptx"),
         "pptx_limit": PPTX_LIMIT,
+        "available_agents": sorted(AGENTS),
     }
 
 
@@ -423,7 +440,43 @@ def _skills_for(student_id: str) -> list[str]:
     return SKILL_IDS
 
 
-def _request_kwargs(messages: list[Any], skills: list[str] | None = None) -> dict[str, Any]:
+def _mentioned_agents(text: str) -> list[str]:
+    """本文中の @部門 を拾う。定義がある部門だけを、書かれた順で返す。"""
+    if not AGENTS:
+        return []
+    seen: list[str] = []
+    for name in re.findall(r"@([A-Za-z_][A-Za-z0-9_]*)", text):
+        key = name.lower()
+        if key in AGENTS and key not in seen:
+            seen.append(key)
+    return seen[:MAX_AGENTS_PER_TURN]
+
+
+def _ask_agent(agent: str, question: str) -> dict[str, str]:
+    """部門AIを1つ呼ぶ。テキストのみで、スキルもコード実行も渡さない。
+
+    会社設定を system の先頭に置くのは通常ターンと同じなので、
+    2つ目以降の部門はプロンプトキャッシュが効いて安く済む
+    （実測: 3部門＋統合で約9円）。
+    """
+    resp = client.beta.messages.create(
+        model=MODEL,
+        max_tokens=2000,
+        betas=["context-management-2025-06-27"],
+        output_config={"effort": "low"},   # 部門の見解は短くてよい
+        system=[
+            {"type": "text", "text": COMPANY_MD,
+             "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+            {"type": "text", "text": AGENTS[agent]},
+        ],
+        messages=[{"role": "user", "content": question}],
+    )
+    text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    return {"agent": agent, "text": text, "usage": resp.usage}
+
+
+def _request_kwargs(messages: list[Any], skills: list[str] | None = None,
+                    solo_agent: str | None = None) -> dict[str, Any]:
     skills = SKILL_IDS if skills is None else skills
     return dict(
         model=MODEL,
@@ -450,13 +503,15 @@ def _request_kwargs(messages: list[Any], skills: list[str] | None = None) -> dic
         # cache_control は system の最後のブロックに置く。tools + system がまとめて
         # キャッシュされ、全学生が同じ company.md を共有するので読出コストは約1/10。
         # ここに日時や学生名を差し込むとキャッシュが毎回無効化されるので絶対に入れない。
+        # 部門が1つだけ指定されたときは、その役割定義を後ろに足す。
+        # 会社設定は先頭のまま動かさないので、キャッシュは維持される。
         system=[
             {
                 "type": "text",
                 "text": COMPANY_MD,
                 "cache_control": {"type": "ephemeral", "ttl": "1h"},
             }
-        ],
+        ] + ([{"type": "text", "text": AGENTS[solo_agent]}] if solo_agent else []),
         messages=messages,
     )
 
@@ -487,7 +542,8 @@ def _harvest_files(response: Any, student_id: str) -> list[dict[str, str]]:
     return saved
 
 
-def _run_turn(messages: list[Any], skills: list[str]) -> tuple[Any, dict[str, int]]:
+def _run_turn(messages: list[Any], skills: list[str],
+              solo_agent: str | None = None) -> tuple[Any, dict[str, int]]:
     """1ターン実行。pause_turn は上限つきで自動再開する。
 
     code execution はサーバ側ツールなので、実行が長引くと stop_reason=pause_turn で
@@ -497,7 +553,7 @@ def _run_turn(messages: list[Any], skills: list[str]) -> tuple[Any, dict[str, in
     response = None
 
     for attempt in range(1, MAX_RESUME + 1):
-        response = client.beta.messages.create(**_request_kwargs(messages, skills))
+        response = client.beta.messages.create(**_request_kwargs(messages, skills, solo_agent))
         u = response.usage
         cw = getattr(u, "cache_creation_input_tokens", 0) or 0
         cr = getattr(u, "cache_read_input_tokens", 0) or 0
@@ -592,15 +648,58 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
 
     messages = _restore_history(student_id)
 
+    # ── 部門AI（サブエージェント）の並列起動 ──────────────────
+    # @finance のように部門が2つ以上指定されたら、各部門を並列で呼び、
+    # その見解を添えてCEO側に統合させる。1つだけなら通常ターンに
+    # その部門の役割定義を足すだけにして、無駄な呼び出しを避ける。
+    agents = _mentioned_agents(text)
+    agent_views: list[dict[str, str]] = []
+    agent_totals = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+
+    if len(agents) >= 2:
+        with ThreadPoolExecutor(max_workers=len(agents)) as pool:
+            futures = {pool.submit(_ask_agent, a, text): a for a in agents}
+            got: dict[str, dict[str, Any]] = {}
+            for fut in as_completed(futures):
+                a = futures[fut]
+                try:
+                    got[a] = fut.result()
+                except Exception as exc:                    # 1部門が落ちても続行
+                    print(f"[WARN] 部門AI {a} の呼び出しに失敗: {exc}", flush=True)
+        for a in agents:                                    # 指定された順に並べ直す
+            r = got.get(a)
+            if not r:
+                continue
+            u = r["usage"]
+            agent_totals["input"] += u.input_tokens or 0
+            agent_totals["output"] += u.output_tokens or 0
+            agent_totals["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+            agent_totals["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
+            agent_views.append({"agent": a, "text": r["text"]})
+        print(f"  [agents] {len(agent_views)}部門を並列起動: "
+              f"{', '.join(v['agent'] for v in agent_views)}", flush=True)
+
     # 直前に作った成果物をコンテナに持ち込む。これがないと
     # 「さっきの Excel にグラフを足して」が通らない（コンテナは毎回新規のため）。
-    blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    prompt_text = text
+    if agent_views:
+        views = "\n\n".join(
+            f"### @{v['agent']} の見解\n{v['text']}" for v in agent_views
+        )
+        prompt_text = (
+            f"{text}\n\n---\n"
+            f"以下は各部門AIを並列起動して得た見解です。"
+            f"これらを踏まえ、CEO AI として統合した判断を示してください。"
+            f"各部門の要点に触れたうえで、意見が割れている点があれば明示し、"
+            f"最後に代表（人間）が判断すべき事項を挙げてください。\n\n{views}"
+        )
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for file_id in CARRY.get(student_id, [])[-MAX_CARRY_FILES:]:
         blocks.append({"type": "container_upload", "file_id": file_id})
     messages.append({"role": "user", "content": blocks})
 
     try:
-        response, totals = _run_turn(messages, skills)
+        response, totals = _run_turn(messages, skills, solo_agent=agents[0] if len(agents) == 1 else None)
     except anthropic.BadRequestError as exc:
         # ディスクから復元した履歴が API に受け付けられないケース。
         # 学生を詰まらせないよう、履歴を捨てて今回の発言だけで一度やり直す。
@@ -621,6 +720,9 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     except anthropic.APIConnectionError as exc:
         messages.pop()
         raise HTTPException(status_code=502, detail="Claude API に接続できませんでした") from exc
+
+    for k in totals:                    # 部門AIの消費も同じターンに計上する
+        totals[k] += agent_totals[k]
 
     usd = _cost_usd(
         input_tokens=totals["input"],
@@ -677,6 +779,8 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
         "period_cap_yen": PERIOD_YEN_CAP,
         "pptx_used": db.count_artifacts(student_id, "pptx"),
         "pptx_limit": PPTX_LIMIT,
+        "departments": agent_views,
+        "available_agents": sorted(AGENTS),
     }
 
 

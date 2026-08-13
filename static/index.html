@@ -156,6 +156,15 @@
   }
   .msg.me .body { background: var(--accent-bg); border-color: transparent; }
 
+  .dept {
+    margin: .4rem 0 .6rem; border-left: 3px solid var(--s2);
+    background: var(--card); border-radius: 0 8px 8px 0;
+    padding: .5rem .7rem;
+  }
+  .dept .who { font-size: .74rem; font-weight: 600; color: var(--s2); }
+  .dept .txt { font-size: .82rem; white-space: pre-wrap; margin-top: .2rem; }
+  .depts-title { font-size: .74rem; color: var(--muted); margin: .6rem 0 .1rem; }
+
   .files { margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .4rem; }
   .files a {
     font-size: .82rem; text-decoration: none; border: 1px solid var(--accent);
@@ -265,6 +274,7 @@
         <code>損益分岐点売上高を計算して</code> ／
         <code>役員会用に3枚のスライドを作って</code>（スライドは1回のみ）
       </p>
+      <p class="hint" id="agentHint" style="margin:.5rem 0 0"></p>
     </div>
 
     <div id="log"></div>
@@ -638,6 +648,14 @@ function bubble(role, text) {
   return b;
 }
 
+function showAgents(list) {
+  if (!list?.length || $("agentHint").dataset.done) return;
+  $("agentHint").dataset.done = "1";
+  $("agentHint").innerHTML =
+    "部門AIを指名できます（2つ以上書くと並列で起動し、統合した判断が返ります）：<br>"
+    + list.map((a) => `<code>@${a}</code>`).join(" ");
+}
+
 async function enterApp(d) {
   $("login").hidden = true;
   $("app").hidden = false;
@@ -645,6 +663,7 @@ async function enterApp(d) {
   $("logout").hidden = false;
   $("who").textContent = d.student_id;
   meter(d);
+  if (d.available_agents) showAgents(d.available_agents);
   try { renderDashboard(await (await fetch("/api/company")).json()); }
   catch { /* ダッシュボードが出なくてもチャットは使える */ }
   $("input").focus();
@@ -686,6 +705,28 @@ $("ask").onsubmit = async (e) => {
 
   try {
     const d = await post("/api/chat", { message: text });
+
+    // 部門AIを並列起動した場合は、その見解を統合回答の前に出す。
+    // 「どの部門が何と言ったか」が見えることがこの演習の要点。
+    if (d.departments?.length) {
+      const box = document.createElement("div");
+      const t = document.createElement("p");
+      t.className = "depts-title";
+      t.textContent = `${d.departments.length}部門を並列起動しました`;
+      box.append(t);
+      for (const dep of d.departments) {
+        const w = document.createElement("div");
+        w.className = "dept";
+        const who = document.createElement("div");
+        who.className = "who"; who.textContent = "@" + dep.agent;
+        const tx = document.createElement("div");
+        tx.className = "txt"; tx.textContent = dep.text;
+        w.append(who, tx);
+        box.append(w);
+      }
+      pending.parentElement.insertBefore(box, pending.parentElement.firstChild.nextSibling);
+    }
+
     pending.textContent = d.reply;
     if (d.files?.length) {
       const box = document.createElement("div");
@@ -696,6 +737,7 @@ $("ask").onsubmit = async (e) => {
       pending.parentElement.append(box);
     }
     meter(d);
+    if (d.available_agents?.length) showAgents(d.available_agents);
   } catch (err) {
     pending.textContent = "―";
     $("err").textContent = err.message;
