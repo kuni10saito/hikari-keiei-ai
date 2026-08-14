@@ -46,7 +46,7 @@ services:
       # 切り替えたら会話履歴のリセットを忘れないこと:
       #   /api/admin/reset?key=...&student_id=...
       - key: COMPANY_FILE
-        value: company_atsuta.md
+        value: company_pacolabo.md
 
       # --- 秘密情報・個人情報：ダッシュボードで入力する ---
       # （リポジトリには保存されない。ROSTER は学籍番号なのでここに書かない）
