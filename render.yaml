@@ -32,6 +32,10 @@ services:
       - key: DATA_DIR
         value: /var/data
 
+      # ログインCookieの保持時間。履歴自体はSQLiteに保存される。
+      - key: SESSION_MAX_AGE_HOURS
+        value: "168"
+
       # ── 使用する会社 ──────────────────────────────
       # ここを書き換えて push すると会社が切り替わる。
       # 対になる _data.json はファイル名の規則で自動選択される。

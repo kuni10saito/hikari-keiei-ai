@@ -74,6 +74,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_ROOT = DATA_DIR / "outputs"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
+_markdown_dir_raw = os.environ.get("MARKDOWN_DIR", "").strip()
+if not _markdown_dir_raw and os.name == "nt":
+    _markdown_dir_raw = str(pathlib.Path.home() / "vault")
+MARKDOWN_MIRROR_ROOT = pathlib.Path(_markdown_dir_raw) if _markdown_dir_raw else None
+if MARKDOWN_MIRROR_ROOT:
+    MARKDOWN_MIRROR_ROOT.mkdir(parents=True, exist_ok=True)
+
 MODEL = "claude-sonnet-5"
 SKILL_IDS = ["xlsx", "docx", "pptx", "pdf"]
 BETAS = [
@@ -124,6 +131,10 @@ LIGHT_RESERVE_YEN = float(os.environ.get("LIGHT_RESERVE_YEN", "30"))  # pptx 使
 LOGIN_MAX_FAILS = 5
 LOGIN_WINDOW_SEC = 600       # この秒数のあいだの失敗を数える
 LOGIN_LOCK_SEC = 900         # 上限に達したら締め出す秒数
+
+# ログインCookieの保持時間。期限切れ後も、会話履歴は学籍番号で復元する。
+SESSION_MAX_AGE_HOURS = float(os.environ.get("SESSION_MAX_AGE_HOURS", "168"))
+SESSION_MAX_AGE_SEC = int(SESSION_MAX_AGE_HOURS * 60 * 60)
 
 # claude-sonnet-5 の料金（$/1Mトークン）。
 # 2026-08-31 までは導入価格 $2/$10、それ以降は通常価格 $3/$15。
@@ -221,9 +232,12 @@ def _banner() -> None:
         f"{'（' + ', '.join('@'+a for a in sorted(AGENTS)) + '）' if AGENTS else '（この会社には定義なし）'}"
         f" ／ 1ターン最大 {MAX_AGENTS_PER_TURN} 部門",
         f"  ログイン防御: {LOGIN_MAX_FAILS}回失敗で{LOGIN_LOCK_SEC // 60}分ロック",
+        f"  ログイン保持: {SESSION_MAX_AGE_HOURS:g} 時間",
         f"  APIキー     : {'設定済み' if os.environ.get('ANTHROPIC_API_KEY') else '★未設定★'}",
         f"  データ保存先: {DATA_DIR}"
         f"{'（DATA_DIR 指定）' if os.environ.get('DATA_DIR') else '（既定：アプリと同じ場所）'}",
+        f"  Markdown保存: outputs/<学籍番号>"
+        f"{' ＋ ' + str(MARKDOWN_MIRROR_ROOT) if MARKDOWN_MIRROR_ROOT else ''}",
         f"  使用量DB    : {db.DB_PATH.name} "
         f"{'既存' if db.DB_PATH.exists() else '新規作成'}",
         "=" * 58,
@@ -384,6 +398,107 @@ def _safe_name(filename: str) -> str | None:
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         return None
     return name
+
+
+def _markdown_filename(student_id: str) -> str:
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    company_key = re.sub(r"[^a-z0-9_]+", "-", _company_key.lower()).strip("-") or "company"
+    return f"{stamp}_{student_id}_{company_key}.md"
+
+
+def _answer_markdown(prompt: str, reply: str,
+                     departments: list[dict[str, str]],
+                     files: list[dict[str, str]]) -> str:
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    company_name = COMPANY_DATA.get("company", {}).get("name", "")
+    lines = [
+        "# 経営演習AI 回答",
+        "",
+        f"- 作成日時: {now}",
+        f"- 会社: {company_name} (`{COMPANY_FILE}`)",
+        "- 用途: 演習用・社外配布不可",
+        "",
+        "## 依頼",
+        "",
+        prompt or "（空）",
+        "",
+    ]
+
+    if departments:
+        lines.extend(["## 部門AIの見解", ""])
+        for dep in departments:
+            lines.extend([
+                f"### @{dep.get('agent', '')}",
+                "",
+                dep.get("text", "") or "（応答なし）",
+                "",
+            ])
+
+    lines.extend(["## 回答", "", reply or "（テキスト応答なし）", ""])
+
+    artifact_names = [f["name"] for f in files if f.get("name")]
+    if artifact_names:
+        lines.extend(["## 生成ファイル", ""])
+        lines.extend(f"- {name}" for name in artifact_names)
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _save_markdown_answer(student_id: str, prompt: str, reply: str,
+                          departments: list[dict[str, str]],
+                          files: list[dict[str, str]]) -> dict[str, str] | None:
+    filename = _markdown_filename(student_id)
+    content = _answer_markdown(prompt, reply, departments, files)
+    out_dir = OUTPUT_ROOT / student_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        (out_dir / filename).write_text(content, encoding="utf-8")
+        db.record_artifact(student_id, filename)
+    except Exception as exc:
+        print(f"[WARN] Markdown回答の保存に失敗 ({student_id}): {exc}", flush=True)
+        return None
+
+    if MARKDOWN_MIRROR_ROOT:
+        try:
+            (MARKDOWN_MIRROR_ROOT / filename).write_text(content, encoding="utf-8")
+        except Exception as exc:
+            print(f"[WARN] Markdown回答のコピーに失敗 ({MARKDOWN_MIRROR_ROOT}): {exc}", flush=True)
+
+    return {"name": filename}
+
+
+def _message_text(content: Any) -> str:
+    """保存済み履歴から画面表示できるテキストだけを取り出す。"""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        elif getattr(block, "type", None) == "text":
+            parts.append(str(getattr(block, "text", "")))
+    return "\n\n".join(p.strip() for p in parts if p.strip()).strip()
+
+
+def _history_for_display(student_id: str) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for m in _restore_history(student_id):
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _message_text(m.get("content", ""))
+        if role == "user":
+            text = text.split("\n\n---\n以下は各部門AIを並列起動して得た見解です。", 1)[0].strip()
+        if text:
+            items.append({"role": "me" if role == "user" else "ai", "text": text})
+    return items[-60:]
 
 
 def _require_student(session: str | None) -> str:
@@ -612,7 +727,7 @@ def login(request: Request, response: Response, body: dict = Body(...)):
     response.set_cookie(
         "session", token, httponly=True, samesite="lax",
         secure=_is_https(request),   # HTTPS 経由なら平文接続に載せない
-        max_age=60 * 60 * 8,
+        max_age=SESSION_MAX_AGE_SEC,
     )
     return _usage_payload(student_id)
 
@@ -633,6 +748,11 @@ def reset(session: str | None = Cookie(default=None)):
     db.clear_history(student_id)
     return {"ok": True}
 
+
+@app.get("/api/history")
+def history(session: str | None = Cookie(default=None)):
+    student_id = _require_student(session)
+    return {"history": _history_for_display(student_id)}
 
 @app.post("/api/chat")
 def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
@@ -749,11 +869,20 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
 
     # refusal は HTTP 200 で返る。content を読む前に必ず確認する。
     if response.stop_reason == "refusal":
+        reply = "この依頼には応答できませんでした。表現を変えて試してください。"
+        md_file = _save_markdown_answer(student_id, text, reply, agent_views, [])
+        files = [md_file] if md_file else []
         return {
-            "reply": "この依頼には応答できませんでした。表現を変えて試してください。",
-            "files": [],
+            "reply": reply,
+            "files": [{"name": f["name"], "url": f"/api/files/{f['name']}"} for f in files],
             "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
             "cap_yen": DAILY_YEN_CAP,
+            "period_yen": db.spent_period_usd(student_id) * USD_JPY,
+            "period_cap_yen": PERIOD_YEN_CAP,
+            "pptx_used": db.count_artifacts(student_id, "pptx"),
+            "pptx_limit": PPTX_LIMIT,
+            "departments": agent_views,
+            "available_agents": sorted(AGENTS),
         }
 
     reply = "".join(
@@ -767,11 +896,16 @@ def chat(body: dict = Body(...), session: str | None = Cookie(default=None)):
     if response.stop_reason == "max_tokens":
         reply += "\n\n（出力が上限に達しました。「続き」と入力すると再開します）"
 
+    display_reply = reply or "（テキスト応答なし）"
+    md_file = _save_markdown_answer(student_id, text, display_reply, agent_views, files)
+    if md_file:
+        files.append(md_file)
+
     # ターンが成功したここで初めて永続化する。失敗したターンは残さない。
     _persist_history(student_id)
 
     return {
-        "reply": reply or "（テキスト応答なし）",
+        "reply": display_reply,
         "files": [{"name": f["name"], "url": f"/api/files/{f['name']}"} for f in files],
         "spent_yen": db.spent_today_usd(student_id) * USD_JPY,
         "cap_yen": DAILY_YEN_CAP,
@@ -885,6 +1019,7 @@ def admin_status(key: str = ""):
         },
         "disk_ok": disk_ok,
         "data_dir": str(DATA_DIR),
+        "markdown_mirror_dir": str(MARKDOWN_MIRROR_ROOT) if MARKDOWN_MIRROR_ROOT else None,
         "db_exists": db.DB_PATH.exists(),
         "warning": None if disk_ok else
                    "永続ディスクが効いていません。再デプロイのたびに使用量が"

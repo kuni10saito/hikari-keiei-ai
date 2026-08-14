@@ -36,8 +36,10 @@ cd C:\Users\saito\Downloads\company-ai
 
 $env:ANTHROPIC_API_KEY = "sk-ant-..."     # 必須
 $env:CLASS_PASSWORD    = "任意のパスワード"   # 学生に配る（既定: hikari）
+$env:SESSION_MAX_AGE_HOURS = "168"      # 任意: ログイン保持時間（7日）
 $env:DAILY_YEN_CAP     = "500"             # 学生1人あたりの1日上限（円）
 $env:ADMIN_KEY         = "任意の管理キー"     # 使用量閲覧用
+$env:MARKDOWN_DIR      = "C:\Users\saito\vault" # 任意: 回答Markdownのコピー先
 
 python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```

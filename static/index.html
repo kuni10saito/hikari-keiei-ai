@@ -259,7 +259,7 @@
     </div>
 
     <div class="card">
-      <h2>作成した成果物</h2>
+      <h2>作成した成果物・回答Markdown</h2>
       <div class="files" id="fileList"><span class="hint">まだありません</span></div>
     </div>
   </aside>
@@ -648,6 +648,13 @@ function bubble(role, text) {
   return b;
 }
 
+function renderHistory(items) {
+  if (!items?.length) return;
+  $("log").innerHTML = "";
+  for (const item of items) {
+    if (item?.text) bubble(item.role === "me" ? "me" : "ai", item.text);
+  }
+}
 function showAgents(list) {
   if (!list?.length || $("agentHint").dataset.done) return;
   $("agentHint").dataset.done = "1";
@@ -666,6 +673,10 @@ async function enterApp(d) {
   if (d.available_agents) showAgents(d.available_agents);
   try { renderDashboard(await (await fetch("/api/company")).json()); }
   catch { /* ダッシュボードが出なくてもチャットは使える */ }
+  try {
+    const h = await (await fetch("/api/history")).json();
+    renderHistory(h.history);
+  } catch { /* 履歴が読めなくても新規チャットは使える */ }
   $("input").focus();
 }
 
